@@ -21,7 +21,7 @@
 因此 Windows 版采用 **GitHub Actions windows-latest runner** 构建，workflow 已入库：
 - 文件：`.github/workflows/build-windows.yml`
 - 触发：push 到 `feature/windows-support`，或手动 `workflow_dispatch`
-- 流程：安装 Flutter 3.47.1 → `flutter pub get` → `flutter build windows --release` → Inno Setup 打包安装器 → 上传 artifact
+- 流程：安装 Flutter 3.47.1 → `flutter pub get` → `flutter build windows --release` → Inno Setup 打包安装器 → 上传 artifact → **自动发布到同版本 GitHub Release**（`gh release upload --clobber`，自 v0.7.5 起）
 
 手动触发：
 ```bash
@@ -106,3 +106,26 @@ gh release upload v<版本号> --repo IFFCheckPass/STDeel stdeel-setup-<版本�
 - **发布**：`gh release upload v0.7.3 stdeel-setup-0.7.3.exe --clobber`（与 `app-0.7.3.apk` 同一 Pre-Release）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.3
 - **收尾**：删除本地下载副本，保持工作区干净。
+
+### v0.7.4（✅ 已成功构建并发布 Windows 安装器）
+- **版本**：`pubspec.yaml version: 0.7.4+21`（与 Android 版一致）。
+- **本次功能/修复**（commit `840b53d`，由 main 同步）：
+  1. **图标圆角统一 20%**：`flutter_launcher_icons` 重新生成 Android 各 mipmap 图标，与 Windows 端一致。
+  2. 5 处 bug 修复（同步/答案库/异步 context/错误解析）。
+- **构建**：push 到 `feature/windows-support` 自动触发 `build-windows`（run 34705638699），约 **4m49s** 成功。
+- **安装器**：`stdeel-setup-0.7.4.exe`，与 `app-0.7.4.apk` 同一 Pre-Release。
+- **发布**：`gh release upload v0.7.4 stdeel-setup-0.7.4.exe --clobber`。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.4
+- **收尾**：删除本地下载副本，保持工作区干净。
+
+### v0.7.5（✅ 已成功构建并发布 Windows 安装器，含自动发布流程）
+- **版本**：`pubspec.yaml version: 0.7.5+22`（与 Android 版一致）。
+- **本次修复**（merge `main` → `feature/windows-support`，commit `316cbce`）：
+  1. **[t0] 后台/锁屏时 AI 流被切断（unknown）**：新增 `lib/services/solve_wakelock.dart`（引用计数唤醒锁，`wakelock_plus`），`failover_manager.dart` 解题期间持有唤醒锁，防止 Doze/App Standby 挂起网络。
+  2. **[t0] 同模型自动重连**：`ai_service.dart` 重构 `_runStream`，网络被系统挂起导致流中断且未输出内容时自动重连一次。
+  3. **[unknown 日志细化]**：`_dioErrorText` default 分支记录异常类型/底层 error/请求 URL/堆栈到 FaultLogService（debug log）。
+- **CI 变更**：workflow 新增「发布安装器到 GitHub Release」步骤（`gh release upload --clobber`），push 构建成功后自动上传到同版本 tag，不再依赖人工下载 artifact 再上传。
+- **构建**：push `4c0a5e0`（CI 变更）触发 `build-windows`（run 34862062201），约 **5m** 成功，安装器已自动发布到 v0.7.5。
+- **安装器**：`stdeel-setup-0.7.5.exe`，与 `app-0.7.5.apk` 同一 Pre-Release（0.7.5 < 1.0.0 → Pre-Release）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
+- **收尾**：本次无需本地下载副本（Actions 直接发布）。
