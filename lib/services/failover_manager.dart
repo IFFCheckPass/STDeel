@@ -14,6 +14,7 @@ import 'dart:async';
 import '../config/ai_config.dart';
 import 'ai_service.dart';
 import 'notification_service.dart';
+import 'solve_wakelock.dart';
 
 class FailoverLogEntry {
   FailoverLogEntry(this.timestamp, this.message);
@@ -78,6 +79,11 @@ class FailoverManager {
     bool done = false;
     final failures = <String>[];
 
+    // 解题期间保持设备唤醒（后台/锁屏不断流）：
+    // AI 流式调用可能持续数分钟，期间用户可能按 Home / 锁屏，
+    // Android Doze/App Standby 会挂起网络导致连接被切断。
+    // 引用计数式锁：拆题等其他 AI 调用也共用，全部结束后才释放。
+    await SolveWakelock.acquire();
     try {
       if (models.isEmpty) {
         const msg = '未配置可用的 AI 模型，请到「设置 → AI 模型组合」添加';
@@ -130,6 +136,7 @@ class FailoverManager {
         controller.add(AiFailed(msg));
       }
     } finally {
+      await SolveWakelock.release();
       if (!controller.isClosed) {
         await controller.close();
       }

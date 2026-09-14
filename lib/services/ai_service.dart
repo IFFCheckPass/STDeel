@@ -150,168 +150,221 @@ class AiService {
       }
     }
 
-    // think 计时从发起请求开始（含连接 + 模型排队时间），
-    // 收到首个 reasoning 或 content 块即视为"模型已开始响应"。
-    final thinkTimer = Timer(Duration(seconds: thinkTimeoutSeconds), () {
-      if (!cancelToken.isCancelled) {
-        cancelToken.cancel('think 超时');
-      }
-      fail('${model.name}（${model.model}）在 ${thinkTimeoutSeconds}s 内'
-          '未输出任何内容，已自动切换下一模型');
-    });
+    /// 重置 think 计时（同模型重连后，重新等待模型首字输出）
+    late Timer thinkTimer;
+    void resetThinkTimer() {
+      thinkTimer?.cancel();
+      thinkTimer = Timer(Duration(seconds: thinkTimeoutSeconds), () {
+        if (!cancelToken.isCancelled) {
+          cancelToken.cancel('think 超时');
+        }
+        fail('${model.name}（${model.model}）在 ${thinkTimeoutSeconds}s 内'
+            '未输出任何内容，已自动切换下一模型');
+      });
+    }
+    resetThinkTimer();
 
-    Response<ResponseBody> response;
-    try {
-      response = await _dio.post<ResponseBody>(
-        url,
-        data: body,
-        cancelToken: cancelToken,
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer ${model.apiKey}',
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-          },
-          responseType: ResponseType.stream,
-          receiveTimeout: const Duration(minutes: 5),
-        ),
+    // 允许一次同模型自动重连：应用在后台/锁屏时 Android 会挂起网络
+    // （Doze/App Standby），流式连接被系统切断（Dio 报 unknown 或连接重置）。
+    // 此时若尚未产生任何回答内容，重连一次往往能直接恢复，避免误报失败。
+    var canRetry = true;
+
+    /// 一次完整的「发起请求 + 消费流」尝试。
+    /// 返回 true 表示已终局（成功/失败/超时）；false 表示需要同模型重连。
+    Future<bool> attemptOnce() async {
+      Response<ResponseBody> response;
+      try {
+        response = await _dio.post<ResponseBody>(
+          url,
+          data: body,
+          cancelToken: cancelToken,
+          options: Options(
+            headers: {
+              'Authorization': 'Bearer ${model.apiKey}',
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream',
+            },
+            responseType: ResponseType.stream,
+            receiveTimeout: const Duration(minutes: 5),
+          ),
+        );
+      } on DioException catch (e) {
+        thinkTimer.cancel();
+        if (completer.isCompleted) return true; // think 超时已处理
+        if (canRetry && _isRetriableDioError(e)) return false;
+        fail('请求失败（${model.name}）: '
+            '${await _dioErrorText(e,
+                source: 'AI 调用 · 解题', comboIndex: comboIndex, model: model)}');
+        return true;
+      } catch (e) {
+        thinkTimer.cancel();
+        if (completer.isCompleted) return true;
+        if (canRetry) return false;
+        fail('请求失败（${model.name}）: $e');
+        return true;
+      }
+
+      if (response.data == null) {
+        thinkTimer.cancel();
+        fail('响应体为空（${model.name}）');
+        return true;
+      }
+
+      final stream = response.data!.stream.cast<List<int>>().transform(
+        utf8.decoder,
       );
-    } on DioException catch (e) {
-      thinkTimer.cancel();
-      if (completer.isCompleted) return; // think 超时已处理
-      fail('请求失败（${model.name}）: '
-          '${await _dioErrorText(e,
-              source: 'AI 调用 · 解题', comboIndex: comboIndex, model: model)}');
-      return;
-    } catch (e) {
-      thinkTimer.cancel();
-      if (completer.isCompleted) return;
-      fail('请求失败（${model.name}）: $e');
-      return;
-    }
+      final buffer = StringBuffer();
+      bool thinkingStarted = false;
+      bool answeringStarted = false;
+      String reasoningContent = '';
+      String answerContent = '';
 
-    if (response.data == null) {
-      thinkTimer.cancel();
-      fail('响应体为空（${model.name}）');
-      return;
-    }
+      try {
+        await for (final chunk in stream) {
+          if (completer.isCompleted) break;
 
-    final stream = response.data!.stream.cast<List<int>>().transform(
-      utf8.decoder,
-    );
-    final buffer = StringBuffer();
-    bool thinkingStarted = false;
-    bool answeringStarted = false;
-    String reasoningContent = '';
-    String answerContent = '';
+          buffer.write(chunk);
 
-    try {
-      await for (final chunk in stream) {
-        if (completer.isCompleted) break;
+          // 按行拆分，最后一行可能不完整，需保留在 buffer
+          final raw = buffer.toString();
+          final lines = raw.split('\n');
+          buffer.clear();
+          buffer.write(lines.removeLast());
 
-        buffer.write(chunk);
+          for (final line in lines) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
+            if (!trimmed.startsWith('data:')) continue;
 
-        // 按行拆分，最后一行可能不完整，需保留在 buffer
-        final raw = buffer.toString();
-        final lines = raw.split('\n');
-        buffer.clear();
-        buffer.write(lines.removeLast());
+            // 'data: ' 或 'data:'
+            var data = trimmed.substring(5);
+            if (data.startsWith(' ')) data = data.substring(1);
 
-        for (final line in lines) {
-          final trimmed = line.trim();
-          if (trimmed.isEmpty) continue;
-          if (!trimmed.startsWith('data:')) continue;
-
-          // 'data: ' 或 'data:'
-          var data = trimmed.substring(5);
-          if (data.startsWith(' ')) data = data.substring(1);
-
-          if (data.trim() == '[DONE]') {
-            thinkTimer.cancel();
-            final questions = _parseAnswer(answerContent);
-            _safeAdd(
-              controller,
-              AiDone(SolveResult(
-                questions: questions,
-                aiModel: model.name,
-                latencyMs: stopWatch.elapsedMilliseconds,
-                tokensUsed: _estimateTokens(reasoningContent, answerContent),
-                source: 'ai',
-              )),
-            );
-            if (!completer.isCompleted) completer.complete();
-            return;
-          }
-
-          Map<String, dynamic> json;
-          try {
-            json = jsonDecode(data) as Map<String, dynamic>;
-          } catch (_) {
-            continue;
-          }
-
-          final choices = json['choices'] as List<dynamic>?;
-          if (choices == null || choices.isEmpty) continue;
-          final delta =
-              (choices[0] as Map<String, dynamic>)['delta'] as Map<String, dynamic>?;
-
-          if (delta == null) continue;
-
-          final reasoning = delta['reasoning_content'] as String?;
-          final content = delta['content'] as String?;
-          final hasReasoning = reasoning != null && reasoning.isNotEmpty;
-          final hasContent = content != null && content.isNotEmpty;
-
-          // 只要模型开始输出（无论思考还是回答），think 计时即结束
-          if (hasReasoning || hasContent) {
-            thinkTimer.cancel();
-          }
-
-          if (hasReasoning) {
-            if (!thinkingStarted) {
-              thinkingStarted = true;
-              _safeAdd(controller, ThinkingStarted(model.name));
+            if (data.trim() == '[DONE]') {
+              thinkTimer.cancel();
+              final questions = _parseAnswer(answerContent);
+              _safeAdd(
+                controller,
+                AiDone(SolveResult(
+                  questions: questions,
+                  aiModel: model.name,
+                  latencyMs: stopWatch.elapsedMilliseconds,
+                  tokensUsed: _estimateTokens(reasoningContent, answerContent),
+                  source: 'ai',
+                )),
+              );
+              if (!completer.isCompleted) completer.complete();
+              return true;
             }
-            reasoningContent += reasoning;
-            _safeAdd(controller, ThinkingChunk(reasoning));
-          }
 
-          if (hasContent) {
-            if (!answeringStarted) {
-              answeringStarted = true;
-              _safeAdd(controller, AnsweringStarted(model.name));
+            Map<String, dynamic> json;
+            try {
+              json = jsonDecode(data) as Map<String, dynamic>;
+            } catch (_) {
+              continue;
             }
-            answerContent += content;
-            _safeAdd(controller, AnsweringChunk(content));
+
+            final choices = json['choices'] as List<dynamic>?;
+            if (choices == null || choices.isEmpty) continue;
+            final delta = (choices[0] as Map<String, dynamic>)['delta']
+                as Map<String, dynamic>?;
+
+            if (delta == null) continue;
+
+            final reasoning = delta['reasoning_content'] as String?;
+            final content = delta['content'] as String?;
+            final hasReasoning = reasoning != null && reasoning.isNotEmpty;
+            final hasContent = content != null && content.isNotEmpty;
+
+            // 只要模型开始输出（无论思考还是回答），think 计时即结束
+            if (hasReasoning || hasContent) {
+              thinkTimer.cancel();
+            }
+
+            if (hasReasoning) {
+              if (!thinkingStarted) {
+                thinkingStarted = true;
+                _safeAdd(controller, ThinkingStarted(model.name));
+              }
+              reasoningContent += reasoning;
+              _safeAdd(controller, ThinkingChunk(reasoning));
+            }
+
+            if (hasContent) {
+              if (!answeringStarted) {
+                answeringStarted = true;
+                _safeAdd(controller, AnsweringStarted(model.name));
+              }
+              answerContent += content;
+              _safeAdd(controller, AnsweringChunk(content));
+            }
           }
         }
-      }
-    } catch (e) {
-      // 取消触发的异常：completer 已由计时器完成，忽略
-      if (!completer.isCompleted) {
-        fail('流解析异常（${model.name}）: $e');
-      }
-    } finally {
-      thinkTimer.cancel();
-      // 流自然结束但未收到 [DONE]：有内容则视为完成
-      if (!completer.isCompleted) {
-        if (answerContent.isNotEmpty) {
-          final questions = _parseAnswer(answerContent);
-          _safeAdd(
-            controller,
-            AiDone(SolveResult(
-              questions: questions,
-              aiModel: model.name,
-              latencyMs: stopWatch.elapsedMilliseconds,
-              tokensUsed: _estimateTokens(reasoningContent, answerContent),
-              source: 'ai',
-            )),
-          );
-        } else {
-          fail('${model.name} 连接已断开且未返回内容');
+      } catch (e) {
+        // 取消触发的异常：completer 已由计时器完成，忽略
+        if (!completer.isCompleted) {
+          // 网络中断且尚未输出任何内容 → 可重连；否则按失败处理
+          if (canRetry && answerContent.isEmpty) return false;
+          fail('流解析异常（${model.name}）: $e');
         }
+        return true;
+      }
+
+      thinkTimer.cancel();
+      // 流自然结束但未收到 [DONE]
+      if (completer.isCompleted) return true;
+      if (answerContent.isNotEmpty) {
+        final questions = _parseAnswer(answerContent);
+        _safeAdd(
+          controller,
+          AiDone(SolveResult(
+            questions: questions,
+            aiModel: model.name,
+            latencyMs: stopWatch.elapsedMilliseconds,
+            tokensUsed: _estimateTokens(reasoningContent, answerContent),
+            source: 'ai',
+          )),
+        );
         completer.complete();
+        return true;
       }
+      // 无任何内容且流提前结束（连接被切断）→ 可重连
+      if (canRetry) return false;
+      fail('${model.name} 连接已断开且未返回内容');
+      return true;
+    }
+
+    // 主循环：最多尝试 2 次（初始 + 1 次同模型重连）
+    while (true) {
+      final finished = await attemptOnce();
+      if (finished) return;
+      canRetry = false;
+      resetThinkTimer();
+      FaultLogService.instance.record(
+        source: 'AI 调用 · 解题',
+        code: '重连',
+        summary: '${model.name} 网络中断，自动重连一次',
+        detail: '应用在后台/锁屏或弱网时流式连接被切断（Dio unknown / 连接重置），'
+            '已自动重连继续解题。模型：${model.model}',
+      );
+    }
+  }
+
+  /// 判断 DioException 是否值得同模型重连（网络层故障，非业务错误）。
+  bool _isRetriableDioError(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
+      case DioExceptionType.connectionError:
+      case DioExceptionType.unknown:
+        // 后台挂起/弱网抖动多为 connectionError / unknown / 超时
+        return true;
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.badResponse:
+      case DioExceptionType.cancel:
+        return false;
     }
   }
 
@@ -393,11 +446,24 @@ class AiService {
       case DioExceptionType.cancel:
         return '请求已取消';
       default:
+        // unknown 多为连接被重置/后台挂起/代理切断等底层网络故障，
+        // 单凭 e.message 常是空串，必须把异常类型、底层 error、请求信息
+        // 全部写进 detail，供用户复制反馈时真正定位问题（debug log）。
+        final detail = [
+          'DioException 类型：${e.type.name}',
+          if (e.message != null && e.message!.isNotEmpty) 'message：${e.message}',
+          if (e.error != null) '底层 error：${e.error}',
+          if (e.response != null)
+            'response：${e.response?.statusCode} ${e.response?.statusMessage}',
+          '请求：${e.requestOptions.method} ${e.requestOptions.uri}',
+          if (e.stackTrace != null)
+            '堆栈：${e.stackTrace.toString().split('\n').take(6).join('\n')}',
+        ].join('\n');
         FaultLogService.instance.record(
             source: source,
             code: '未知',
-            summary: '${e.message ?? e.type.name}',
-            detail: '${e.message ?? e.type.name}');
+            summary: '${e.message ?? e.type.name}（连接被重置/后台挂起？）',
+            detail: detail);
         return '网络请求异常（${e.message ?? e.type.name}）';
     }
   }

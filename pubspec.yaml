@@ -1,7 +1,7 @@
 name: stdeel
 description: 思谛 STDeel - 拍照识题与 AI 解题学习软件
 publish_to: 'none'
-version: 0.7.4+21
+version: 0.7.5+22
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -54,6 +54,9 @@ dependencies:
   # 补充依赖
   fl_chart: ^0.67.0   # 知识点雷达图
   collection: ^1.18.0
+
+  # 后台解题保持设备唤醒（防止 Doze/App Standby 挂起网络切断 AI 流）
+  wakelock_plus: ^1.2.0
 
 dev_dependencies:
   flutter_test:
