@@ -290,3 +290,17 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布**：先 `git push` 源码到 `main`（commit `3f6b003` 图标+bug 修复、`0fc9d9f` file_picker 升级），Windows 分支 Actions 构建安装器 `stdeel-setup-0.7.4.exe`；`gh release create v0.7.4 --prerelease` 并上传 `app-0.7.4.apk` + `stdeel-setup-0.7.4.exe`（0.7.4 < 1.0.0 → Pre-Release，双端同一 tag）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.4
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.4.apk`，保持 `main` 干净。
+
+### v0.7.5（✅ 已成功编译并发布，小版本更新：0.7.4 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.5+22`；`settings_screen.dart` 底部文案 `v0.7.5`。
+- **本次修复**：
+  1. **[t0] 后台/锁屏时 AI 流被切断（unknown）**（`lib/services/solve_wakelock.dart` 新增 + `lib/services/failover_manager.dart` 集成）：
+     - 根因：App 进后台/锁屏后 Android 进入 Doze / App Standby，网络被系统挂起，正在进行的 AI 流式连接被切断 → Dio 报 `unknown`。
+     - 方案：引入 `wakelock_plus ^1.2.0`，实现引用计数唤醒锁 `SolveWakelock`；`FailoverManager._run` 解题全程 `acquire()`，`finally` 中 `release()`。引用计数支持嵌套（拆题→解题链路），仅当所有引用释放才真正 `disable()`。
+  2. **[t0] 同模型自动重连**（`ai_service.dart` 重构 `_runStream`）：网络被系统挂起导致连接中断且尚未输出任何回答内容时，对可重试错误（connectionTimeout/sendTimeout/receiveTimeout/transformTimeout/connectionError/unknown）自动重连一次并重置 think 计时。
+  3. **[unknown 日志细化]**（`ai_service.dart` `_dioErrorText` default 分支）：原日志仅记录 `unknown` 单字符串；现记录 DioException 类型、message、底层 error、response 状态码、请求 method+URL、堆栈前 6 行，写入 FaultLogService 供用户复制反馈定位。
+- **构建**：`flutter build apk --release -PsigningEnabled`（环境重建后：Flutter SDK 3.35.x + Android SDK + 依赖拉取）。产物 **app-release.apk 74.4MB**。
+- **签名**：`feature/signing-config` 分支取 `upload-keystore.jks`+`key.properties`（不并入 main），产物改名 `app-0.7.5.apk`。
+- **发布**：`git push` 到 `main`（commit `524fa29`）；Windows 分支 merge main 后 Actions 构建安装器；`gh release create v0.7.5 --prerelease` 并上传 `app-0.7.5.apk`；Windows workflow 自本次起新增自动发布步骤（`gh release upload --clobber`），`stdeel-setup-0.7.5.exe` 由 Actions 直接上传到 v0.7.5。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.5.apk`，保持 `main` 干净。
