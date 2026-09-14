@@ -65,3 +65,14 @@ jobs:
           name: stdeel-windows-installer
           path: build/windows/installer/stdeel-setup-*.exe
           if-no-files-found: error
+
+      - name: 发布安装器到 GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+          $exe = Get-ChildItem build/windows/installer/stdeel-setup-$ver.exe
+          Write-Host "发布到 Release v$ver : $($exe.FullName) ($([math]::Round($exe.Length/1MB,1)) MB)"
+          gh release upload "v$ver" $exe.FullName --repo $env:GITHUB_REPOSITORY --clobber
+          Write-Host "已发布到 v$ver"
