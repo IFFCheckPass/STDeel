@@ -151,7 +151,10 @@ class AiService {
     }
 
     /// 重置 think 计时（同模型重连后，重新等待模型首字输出）
-    late Timer thinkTimer;
+    /// 注意：必须用可空 Timer，首次 resetThinkTimer() 时 thinkTimer 尚未赋值，
+    /// 若用 `late` 无初始化器变量，`thinkTimer?.cancel()` 读取会抛
+    /// LateInitializationError，导致整个 _runStream 崩溃（v0.7.5 回归）。
+    Timer? thinkTimer;
     void resetThinkTimer() {
       thinkTimer?.cancel();
       thinkTimer = Timer(Duration(seconds: thinkTimeoutSeconds), () {
@@ -189,7 +192,7 @@ class AiService {
           ),
         );
       } on DioException catch (e) {
-        thinkTimer.cancel();
+        thinkTimer?.cancel();
         if (completer.isCompleted) return true; // think 超时已处理
         if (canRetry && _isRetriableDioError(e)) return false;
         fail('请求失败（${model.name}）: '
@@ -197,7 +200,7 @@ class AiService {
                 source: 'AI 调用 · 解题', comboIndex: comboIndex, model: model)}');
         return true;
       } catch (e) {
-        thinkTimer.cancel();
+        thinkTimer?.cancel();
         if (completer.isCompleted) return true;
         if (canRetry) return false;
         fail('请求失败（${model.name}）: $e');
@@ -205,7 +208,7 @@ class AiService {
       }
 
       if (response.data == null) {
-        thinkTimer.cancel();
+        thinkTimer?.cancel();
         fail('响应体为空（${model.name}）');
         return true;
       }
@@ -241,7 +244,7 @@ class AiService {
             if (data.startsWith(' ')) data = data.substring(1);
 
             if (data.trim() == '[DONE]') {
-              thinkTimer.cancel();
+              thinkTimer?.cancel();
               final questions = _parseAnswer(answerContent);
               _safeAdd(
                 controller,
@@ -278,7 +281,7 @@ class AiService {
 
             // 只要模型开始输出（无论思考还是回答），think 计时即结束
             if (hasReasoning || hasContent) {
-              thinkTimer.cancel();
+              thinkTimer?.cancel();
             }
 
             if (hasReasoning) {
@@ -310,7 +313,7 @@ class AiService {
         return true;
       }
 
-      thinkTimer.cancel();
+      thinkTimer?.cancel();
       // 流自然结束但未收到 [DONE]
       if (completer.isCompleted) return true;
       if (answerContent.isNotEmpty) {

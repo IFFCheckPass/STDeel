@@ -304,3 +304,19 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布**：`git push` 到 `main`（commit `524fa29`）；Windows 分支 merge main 后 Actions 构建安装器；`gh release create v0.7.5 --prerelease` 并上传 `app-0.7.5.apk`；Windows workflow 自本次起新增自动发布步骤（`gh release upload --clobber`），`stdeel-setup-0.7.5.exe` 由 Actions 直接上传到 v0.7.5。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.5.apk`，保持 `main` 干净。
+
+### v0.7.5 re-build（✅ 修复全模型调用失败回归，覆盖发布）
+- **场景**：v0.7.5 首次实测「所有模型均调用失败、与模型组合无关、错误日志无任何记录」。经 diff 审查 `524fa29`，定位回归根因：
+  - **根因**：`ai_service.dart` 新增的 `late Timer thinkTimer;` 无初始化器。`_runStream` 首次调用 `resetThinkTimer()` 时，`thinkTimer?.cancel()` 读取未初始化的 late 变量 → **抛 `LateInitializationError`**，整个 `_runStream` 在发起 HTTP 请求前就崩溃（异步错误无 try/catch 覆盖，不落 FaultLogService），故所有模型「静默失败」且无任何故障日志。
+  - **修复**：`late Timer thinkTimer` → `Timer? thinkTimer`，全部 `thinkTimer.cancel()` → `thinkTimer?.cancel()`（空安全），首次调用时短路为 null 不再抛错；重连后 `resetThinkTimer()` 正常重置。
+- **验证**：`flutter analyze` → 0 error / 0 warning（仅历史 info 级 withOpacity 提示）。
+- **构建**：环境重建（/opt 被清空）：Flutter SDK 用国内镜像极速拉取：
+  `curl -sL -o /tmp/flutter.tar.xz https://storage.flutter-io.cn/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.4-stable.tar.xz`（约 1.5GB，20s 内完成；官方 storage.googleapis 极慢，勿用）；`tar xf` 到 `/opt/flutter`，`git config --global --add safe.directory /opt/flutter`。
+  Android SDK：`sdkmanager --sdk_root=/opt/android --install "ndk;28.2.13676358"`（platforms;android-36 / build-tools;36.0.0 已存在）。`flutter build apk --release -PsigningEnabled` 首次 **573s 失败**（Gradle daemon 被 cgroup OOM 杀死，anon-rss 2.47GB 超限）。
+- **⚠️ 构建 OOM 调优（本次新增，替代旧 -Xmx2048m）**：`android/gradle.properties` 的 `org.gradle.jvmargs` 改为
+  `-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:ReservedCodeCacheSize=96m -XX:+HeapDumpOnOutOfMemoryError -XX:-UseContainerSupport`
+  （注意：Metaspace 低于 512m 会直接 `OutOfMemoryError: Metaspace`；堆 1536m + Metaspace 512m 组合实测不再触发 cgroup OOM）。构建前清理残留 `java`/Gradle/Kotlin 进程。重跑 Gradle 阶段 **44.8s**，产物 **app-release.apk 74.4MB**。
+- **签名**：`feature/signing-config` 取 `upload-keystore.jks`+`key.properties`（不并入 main）；`apksigner verify --print-certs` → CN=STDeel，SHA-256 `ed7379e8...`（与历史一致）。产物改名 `app-0.7.5.apk`。
+- **发布**：先 `git push` 源码到 `main`（commit `f4599f4` 修复 thinkTimer 回归），再 `gh release upload v0.7.5 app-0.7.5.apk --clobber` 覆盖损坏产物（版本号不变，0.7.5 < 1.0.0 → 仍为 Pre-Release）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/app-0.7.5.apk`，保持 `main` 干净。
