@@ -317,6 +317,6 @@ rm -f android/upload-keystore.jks android/key.properties
   `-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:ReservedCodeCacheSize=96m -XX:+HeapDumpOnOutOfMemoryError -XX:-UseContainerSupport`
   （注意：Metaspace 低于 512m 会直接 `OutOfMemoryError: Metaspace`；堆 1536m + Metaspace 512m 组合实测不再触发 cgroup OOM）。构建前清理残留 `java`/Gradle/Kotlin 进程。重跑 Gradle 阶段 **44.8s**，产物 **app-release.apk 74.4MB**。
 - **签名**：`feature/signing-config` 取 `upload-keystore.jks`+`key.properties`（不并入 main）；`apksigner verify --print-certs` → CN=STDeel，SHA-256 `ed7379e8...`（与历史一致）。产物改名 `app-0.7.5.apk`。
-- **发布**：先 `git push` 源码到 `main`（commit `f4599f4` 修复 thinkTimer 回归），再 `gh release upload v0.7.5 app-0.7.5.apk --clobber` 覆盖损坏产物（版本号不变，0.7.5 < 1.0.0 → 仍为 Pre-Release）。
+- **发布**：先 `git push` 源码到 `main`（commit `44e47a4` 修复 thinkTimer 回归），再 `gh release upload v0.7.5 app-0.7.5.apk --clobber` 覆盖损坏产物（版本号不变，0.7.5 < 1.0.0 → 仍为 Pre-Release）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/app-0.7.5.apk`，保持 `main` 干净。
