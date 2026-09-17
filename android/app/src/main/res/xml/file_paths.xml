@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 应用内更新：向系统安装器授权访问已下载的 APK -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 覆盖 getTemporaryDirectory()（应用 cache 目录） -->
+    <!-- 覆盖 getTemporaryDirectory()（应用 cache 目录，更新包转存下载目录前的临时落点） -->
     <cache-path name="cache" path="." />
     <!-- 覆盖应用内部存储（filesDir / 文档目录） -->
     <files-path name="files" path="." />
     <external-files-path name="external_files" path="." />
+    <!-- Android 9-：更新包发布到公共下载目录后，经 FileProvider 暴露给系统安装器
+         （Android 10+ 走 MediaStore content URI 直供，不经过此路径） -->
+    <external-path name="downloads" path="Download/" />
 </paths>
