@@ -320,3 +320,24 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布**：先 `git push` 源码到 `main`（commit `44e47a4` 修复 thinkTimer 回归），再 `gh release upload v0.7.5 app-0.7.5.apk --clobber` 覆盖损坏产物（版本号不变，0.7.5 < 1.0.0 → 仍为 Pre-Release）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/app-0.7.5.apk`，保持 `main` 干净。
+
+### v0.7.6（✅ 已成功编译并发布，小版本更新：0.7.5 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.6+23`；`settings_screen.dart` 底部文案 `v0.7.6`。
+- **本次修复**：
+  1. **图片编辑裁切**（`lib/screens/image_edit_screen.dart` 重构）：裁切框由「固定原图比例」改为**自由比例**——四角/四边拖动缩放、框内整体移动；背景图片通过 `Transform` 固定（`_fitScale`/`_fitOffset`），不再随手势漂移；新增 1:1/3:4/4:3/16:9/9:16 比例锁定。
+  2. **内建更新下载安装**（`lib/services/update_service.dart` + `android/.../MainActivity.kt` + `file_paths.xml`）：
+     - APK 不再存临时目录：Android 10+ 经 `MediaStore.Downloads` 写入系统「下载」目录，Android 9- 写入公共 `Download/` 并经 FileProvider（`<external-path name="downloads" path="Download/"/>`）暴露给安装器；
+     - 安装成功后删除缓存中的临时下载，避免废弃安装包积累膨胀；
+     - UI 提示更新包保存路径（下载/xxx.apk），自动安装失败可手动兜底。
+  3. **AGENTS.md** 新增「版本号强制递增」规则：每次更新必须至少递增小/中/大版本号（默认 c 位 +1），严禁不递增版本号发布。
+- **构建**：环境被重置，`scripts/build-release.sh` 全自动自愈（Flutter 3.47.1 官方源直下约 2.5h；Android SDK cmdline-tools + 依赖全部缓存）。Gradle 阶段首次 **635s OOM**（cgroup 4G 杀死 daemon，首次并发下载依赖内存峰值超限），**依赖缓存后重试成功**。
+- **脚本自愈修复（本次沉淀，`scripts/build-release.sh`）**：
+  - `sdkmanager --list` 回退分支 `|| echo platforms;android-34` 未加引号被 shell 拆成命令 → 改为循环重试 + `${VAR:-platforms;android-34}` 兜底；
+  - `flutter analyze` 只要存在任意 issue（含 info）就返回非零，`set -e` 直接终止 → 改为 `--no-fatal-infos` 落日志，仅 grep 到 `error/warning` 才终止；
+  - Release tag / 产物名未剥离 `+<build>` 构建号（曾误生成 `v0.7.6+23`）→ `VERSION="${VERSION%%+*}"`；
+  - 签名：本地无 `feature/signing-config` 分支时先 `git fetch origin` 再建本地 ref（仅本地，绝不合并 main）；签名文件缺失直接终止，防止产出 debug 签名 APK；
+  - 启用 release 签名：`android/app/build.gradle.kts` 以 `project.hasProperty("signingEnabled")` 为准，脚本构建前向 `android/gradle.properties` 注入 `signingEnabled=true`，`trap` 保证构建后恢复。
+- **签名**：`apksigner verify --print-certs` → `CN=STDeel`（与历史一致）。产物 **app-0.7.6.apk 74.3MB**。
+- **发布**：`git push` 源码到 `main`（commit `6bbd7b2`）；`gh release create v0.7.6 --prerelease app-0.7.6.apk`（0.7.6 < 1.0.0 → Pre-Release）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.6
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.6.apk`，保持 `main` 干净。

@@ -27,6 +27,8 @@ export FLUTTER_STORAGE_BASE_URL="${FLUTTER_STORAGE_BASE_URL:-https://storage.goo
 # 解析版本号（默认取 pubspec.yaml）
 VERSION="$(sed -n 's/^version: *//p' pubspec.yaml | head -1 | tr -d ' ')"
 VERSION="${1:-$VERSION}"
+# 剥离 +<build> 构建号，Release tag / 产物名只保留 主.次.补丁（如 0.7.6+23 -> 0.7.6）
+VERSION="${VERSION%%+*}"
 APP_NAME="app-${VERSION}.apk"
 REPO="${GITHUB_REPOSITORY:-}"
 echo "==> 版本: $VERSION  产物: $APP_NAME  仓库: ${REPO:-<from gh>}"
@@ -55,32 +57,52 @@ if [ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
 fi
 SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 # flutter 探测所需版本，再安装平台/构建工具/NDK
-SDK_PKGS="$("$SDKMGR" --list 2>/dev/null | grep -oE 'platforms;android-[0-9]+' | sort -V | tail -1 || echo platforms;android-34)"
+# 首次运行 sdkmanager --list 需下载仓库索引，可能瞬时失败，做一次重试兜底
+SDK_PKGS=""
+for _try in 1 2; do
+  SDK_PKGS="$("$SDKMGR" --list 2>/dev/null | grep -oE 'platforms;android-[0-9]+' | sort -V | tail -1 || true)"
+  [ -n "$SDK_PKGS" ] && break
+  sleep 3
+done
+SDK_PKGS="${SDK_PKGS:-platforms;android-34}"
 echo "$SDK_PKGS" "platform-tools" "build-tools;36.0.0" | xargs -n1 "$SDKMGR" --install 2>&1 || true
 yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
 
 # ---------- 3. 取签名文件（不并入库/不合并分支） ----------
 echo "==> 从 feature/signing-config 分支取签名文件（仅本地构建）"
-if git checkout feature/signing-config -- android/upload-keystore.jks android/key.properties 2>/dev/null; then
+# 本地无该分支时从远端创建（仅本地 ref，绝不合并 main）
+if ! git rev-parse --verify feature/signing-config >/dev/null 2>&1; then
+  git fetch origin feature/signing-config 2>/dev/null || true
+  git branch feature/signing-config FETCH_HEAD 2>/dev/null || true
+fi
+if git checkout feature/signing-config -- android/upload-keystore.jks android/key.properties 2>/dev/null \
+   && [ -f android/upload-keystore.jks ] && [ -f android/key.properties ]; then
   echo "已取得签名文件；构建完成后会恢复并清理。"
 else
-  echo "!! 无法取得签名文件，将按未签名 debug 处理（若需签名请检查分支）。"
+  echo "!! 无法取得签名文件，终止构建（防止产出 debug 签名 APK）。"
+  exit 1
 fi
 
 # ---------- 4/5. 构建 ----------
-echo "==> 恢复 release 签名配置（临时）"
-# 若 build.gradle.kts 尚无 release 签名，做最小注入
-if ! grep -q 'signingConfig = signingConfigs.getByName("release")' android/app/build.gradle.kts; then
-  cp android/app/build.gradle.kts /tmp/build.gradle.kts.bak
-  cat >> /tmp/signing.patch <<'EOF'
-EOF
-  echo "!! 需要手工在 android/app/build.gradle.kts 中启用 release 签名配置。"
-fi
+echo "==> 临时启用 release 签名（gradle.properties 注入 signingEnabled=true，构建后恢复）"
+# android/app/build.gradle.kts 的 release 签名以 project.hasProperty("signingEnabled") 为准；
+# gradle.properties 中的键即 Gradle 项目属性，注入后即启用正式签名。
+cp android/gradle.properties /tmp/gradle.properties.bak
+printf '\n# 临时注入：启用 release 签名（构建后由脚本恢复）\nsigningEnabled=true\n' >> android/gradle.properties
+trap 'cp /tmp/gradle.properties.bak android/gradle.properties 2>/dev/null || true' EXIT
 
 echo "==> pub get / 生成代码 / 分析 / 构建"
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs
-flutter analyze
+# 只阻塞 error/warning；info 级（如 withOpacity 弃用提示）不阻断构建。
+# 注：flutter analyze 只要存在任意 issue 就返回非零，故以日志中的 error/warning 为准。
+flutter analyze --no-fatal-infos > /tmp/analyze.log 2>&1 || true
+if grep -qE " (error|warning) •" /tmp/analyze.log; then
+  echo "!! flutter analyze 发现 error/warning，终止构建"
+  tail -20 /tmp/analyze.log
+  exit 1
+fi
+grep -E "issues found" /tmp/analyze.log || true
 flutter build apk --release
 
 # ---------- 6. 产物改名为 app-<版本号>.apk ----------
@@ -105,5 +127,5 @@ gh release create "v$VERSION" $PRE $REPO_ARG "$APP_NAME" 2>&1 || \
 
 # ---------- 8. 清理签名与临时文件，保持 main 干净 ----------
 rm -f android/upload-keystore.jks android/key.properties
-if [ -f /tmp/build.gradle.kts.bak ]; then cp /tmp/build.gradle.kts.bak android/app/build.gradle.kts; fi
+rm -f /tmp/build.gradle.kts.bak /tmp/signing.patch
 echo "==> 完成。请在发布后按需把编号写入 docs/BUILD.md。"
