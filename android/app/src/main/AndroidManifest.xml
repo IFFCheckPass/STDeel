@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 联网：AI API 请求 / flutter_tex 本地渲染服务 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 应用内更新（Android 9-）：把更新包写入公共下载目录；Android 10+ 走 MediaStore 无需权限 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <application
         android:label="思谛"
         android:name="${applicationName}"

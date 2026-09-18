@@ -248,8 +248,9 @@ class UpdateService {
     return latest;
   }
 
-  /// 下载更新包到缓存目录（返回本地路径），带进度回调。
-  /// Windows 下载 .exe 安装器；Android 下载 .apk。
+  /// 下载更新包到本地（返回本地路径），带进度回调。
+  /// Windows 下载 .exe 安装器到系统下载目录；Android 先下载到应用缓存目录，
+  /// 随后由 [installPackage] 转存到系统公共「下载」目录（MediaStore）并拉起安装器。
   ///
   /// GitHub 发布 CDN 直连偶发"连接被挂起/中断"（表现为进度长时间停在 0%），
   /// 因此采用短连接超时（10s）+ 最多 3 次重试；取消则抛"已取消更新"。
@@ -257,11 +258,16 @@ class UpdateService {
     String url, {
     void Function(int received, int total)? onProgress,
     CancelToken? cancelToken,
+    String? fileName,
   }) async {
-    final dir = await getTemporaryDirectory();
+    // Windows 直接落在系统下载目录（~/Downloads），便于检测与手动兜底安装
+    final dir = Platform.isWindows
+        ? (await getDownloadsDirectory()) ?? await getTemporaryDirectory()
+        : await getTemporaryDirectory();
     final ext = Platform.isWindows ? '.exe' : '.apk';
-    final dest = p.join(
-        dir.path, 'stdeel_update_${DateTime.now().millisecondsSinceEpoch}$ext');
+    final name = fileName ??
+        'stdeel_update_${DateTime.now().millisecondsSinceEpoch}$ext';
+    final dest = p.join(dir.path, name);
 
     const maxAttempts = 3;
     Object? lastError;
@@ -315,21 +321,53 @@ class UpdateService {
     return code != null ? 'HTTP $code' : (e.message ?? '未知错误');
   }
 
-  /// 触发安装：Android 用原生 MethodChannel 拉起系统安装器（需用户授权
-  /// "安装未知来源应用"）；Windows 直接启动下载的 .exe 安装器进程。
-  Future<void> installPackage(String path) async {
+  /// 触发安装（Android）。
+  ///
+  /// 流程：
+  ///  1. 通过原生 MethodChannel 把更新包**转存到系统公共「下载」目录**
+  ///     （Android 10+ 走 MediaStore，9- 直接写公共下载目录），
+  ///     用户可在文件管理器/下载应用里随时找到，系统「清除缓存」不会误删，
+  ///     自动安装失败时也方便手动兜底；
+  ///  2. 删除缓存目录中的临时下载，避免反复更新积累废弃安装包；
+  ///  3. 用系统安装器（ACTION_VIEW + FileProvider/MediaStore content URI）唤起安装。
+  ///
+  /// 返回保存到下载目录的文件名（供 UI 提示落盘位置）；Windows 直接启动 .exe。
+  Future<String?> installPackage(String path, {String? fileName}) async {
     if (Platform.isWindows) {
       try {
         await Process.start(path, const [], mode: ProcessStartMode.detached);
-        return;
+        return p.basename(path);
       } catch (e) {
         throw '启动安装器失败：$e';
       }
     }
+    final name = fileName ??
+        'stdeel_update_${DateTime.now().millisecondsSinceEpoch}.apk';
+    Map<dynamic, dynamic> pub;
     try {
-      await _channel.invokeMethod<void>('installPackage', {'path': path});
+      pub = (await _channel.invokeMethod<Map<dynamic, dynamic>>(
+            'publishToDownloads',
+            {'sourcePath': path, 'fileName': name},
+          )) ??
+          const <dynamic, dynamic>{};
+    } on PlatformException catch (e) {
+      throw '保存更新包失败：${e.message ?? e.code}';
+    }
+    // 清理缓存目录中的临时下载，防止存储膨胀
+    try {
+      final f = File(path);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+    final uri = (pub['uri'] ?? '').toString();
+    final filePath = (pub['path'] ?? '').toString();
+    try {
+      await _channel.invokeMethod<void>(
+        'installPackage',
+        {'uri': uri, 'path': filePath},
+      );
     } on PlatformException catch (e) {
       throw '安装失败：${e.message ?? e.code}';
     }
+    return (pub['fileName'] ?? name).toString();
   }
 }

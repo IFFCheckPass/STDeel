@@ -290,3 +290,54 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布**：先 `git push` 源码到 `main`（commit `3f6b003` 图标+bug 修复、`0fc9d9f` file_picker 升级），Windows 分支 Actions 构建安装器 `stdeel-setup-0.7.4.exe`；`gh release create v0.7.4 --prerelease` 并上传 `app-0.7.4.apk` + `stdeel-setup-0.7.4.exe`（0.7.4 < 1.0.0 → Pre-Release，双端同一 tag）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.4
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.4.apk`，保持 `main` 干净。
+
+### v0.7.5（✅ 已成功编译并发布，小版本更新：0.7.4 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.5+22`；`settings_screen.dart` 底部文案 `v0.7.5`。
+- **本次修复**：
+  1. **[t0] 后台/锁屏时 AI 流被切断（unknown）**（`lib/services/solve_wakelock.dart` 新增 + `lib/services/failover_manager.dart` 集成）：
+     - 根因：App 进后台/锁屏后 Android 进入 Doze / App Standby，网络被系统挂起，正在进行的 AI 流式连接被切断 → Dio 报 `unknown`。
+     - 方案：引入 `wakelock_plus ^1.2.0`，实现引用计数唤醒锁 `SolveWakelock`；`FailoverManager._run` 解题全程 `acquire()`，`finally` 中 `release()`。引用计数支持嵌套（拆题→解题链路），仅当所有引用释放才真正 `disable()`。
+  2. **[t0] 同模型自动重连**（`ai_service.dart` 重构 `_runStream`）：网络被系统挂起导致连接中断且尚未输出任何回答内容时，对可重试错误（connectionTimeout/sendTimeout/receiveTimeout/transformTimeout/connectionError/unknown）自动重连一次并重置 think 计时。
+  3. **[unknown 日志细化]**（`ai_service.dart` `_dioErrorText` default 分支）：原日志仅记录 `unknown` 单字符串；现记录 DioException 类型、message、底层 error、response 状态码、请求 method+URL、堆栈前 6 行，写入 FaultLogService 供用户复制反馈定位。
+- **构建**：`flutter build apk --release -PsigningEnabled`（环境重建后：Flutter SDK 3.35.x + Android SDK + 依赖拉取）。产物 **app-release.apk 74.4MB**。
+- **签名**：`feature/signing-config` 分支取 `upload-keystore.jks`+`key.properties`（不并入 main），产物改名 `app-0.7.5.apk`。
+- **发布**：`git push` 到 `main`（commit `524fa29`）；Windows 分支 merge main 后 Actions 构建安装器；`gh release create v0.7.5 --prerelease` 并上传 `app-0.7.5.apk`；Windows workflow 自本次起新增自动发布步骤（`gh release upload --clobber`），`stdeel-setup-0.7.5.exe` 由 Actions 直接上传到 v0.7.5。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.5.apk`，保持 `main` 干净。
+
+### v0.7.5 re-build（✅ 修复全模型调用失败回归，覆盖发布）
+- **场景**：v0.7.5 首次实测「所有模型均调用失败、与模型组合无关、错误日志无任何记录」。经 diff 审查 `524fa29`，定位回归根因：
+  - **根因**：`ai_service.dart` 新增的 `late Timer thinkTimer;` 无初始化器。`_runStream` 首次调用 `resetThinkTimer()` 时，`thinkTimer?.cancel()` 读取未初始化的 late 变量 → **抛 `LateInitializationError`**，整个 `_runStream` 在发起 HTTP 请求前就崩溃（异步错误无 try/catch 覆盖，不落 FaultLogService），故所有模型「静默失败」且无任何故障日志。
+  - **修复**：`late Timer thinkTimer` → `Timer? thinkTimer`，全部 `thinkTimer.cancel()` → `thinkTimer?.cancel()`（空安全），首次调用时短路为 null 不再抛错；重连后 `resetThinkTimer()` 正常重置。
+- **验证**：`flutter analyze` → 0 error / 0 warning（仅历史 info 级 withOpacity 提示）。
+- **构建**：环境重建（/opt 被清空）：Flutter SDK 用国内镜像极速拉取：
+  `curl -sL -o /tmp/flutter.tar.xz https://storage.flutter-io.cn/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.4-stable.tar.xz`（约 1.5GB，20s 内完成；官方 storage.googleapis 极慢，勿用）；`tar xf` 到 `/opt/flutter`，`git config --global --add safe.directory /opt/flutter`。
+  Android SDK：`sdkmanager --sdk_root=/opt/android --install "ndk;28.2.13676358"`（platforms;android-36 / build-tools;36.0.0 已存在）。`flutter build apk --release -PsigningEnabled` 首次 **573s 失败**（Gradle daemon 被 cgroup OOM 杀死，anon-rss 2.47GB 超限）。
+- **⚠️ 构建 OOM 调优（本次新增，替代旧 -Xmx2048m）**：`android/gradle.properties` 的 `org.gradle.jvmargs` 改为
+  `-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:ReservedCodeCacheSize=96m -XX:+HeapDumpOnOutOfMemoryError -XX:-UseContainerSupport`
+  （注意：Metaspace 低于 512m 会直接 `OutOfMemoryError: Metaspace`；堆 1536m + Metaspace 512m 组合实测不再触发 cgroup OOM）。构建前清理残留 `java`/Gradle/Kotlin 进程。重跑 Gradle 阶段 **44.8s**，产物 **app-release.apk 74.4MB**。
+- **签名**：`feature/signing-config` 取 `upload-keystore.jks`+`key.properties`（不并入 main）；`apksigner verify --print-certs` → CN=STDeel，SHA-256 `ed7379e8...`（与历史一致）。产物改名 `app-0.7.5.apk`。
+- **发布**：先 `git push` 源码到 `main`（commit `44e47a4` 修复 thinkTimer 回归），再 `gh release upload v0.7.5 app-0.7.5.apk --clobber` 覆盖损坏产物（版本号不变，0.7.5 < 1.0.0 → 仍为 Pre-Release）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/app-0.7.5.apk`，保持 `main` 干净。
+
+### v0.7.6（✅ 已成功编译并发布，小版本更新：0.7.5 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.6+23`；`settings_screen.dart` 底部文案 `v0.7.6`。
+- **本次修复**：
+  1. **图片编辑裁切**（`lib/screens/image_edit_screen.dart` 重构）：裁切框由「固定原图比例」改为**自由比例**——四角/四边拖动缩放、框内整体移动；背景图片通过 `Transform` 固定（`_fitScale`/`_fitOffset`），不再随手势漂移；新增 1:1/3:4/4:3/16:9/9:16 比例锁定。
+  2. **内建更新下载安装**（`lib/services/update_service.dart` + `android/.../MainActivity.kt` + `file_paths.xml`）：
+     - APK 不再存临时目录：Android 10+ 经 `MediaStore.Downloads` 写入系统「下载」目录，Android 9- 写入公共 `Download/` 并经 FileProvider（`<external-path name="downloads" path="Download/"/>`）暴露给安装器；
+     - 安装成功后删除缓存中的临时下载，避免废弃安装包积累膨胀；
+     - UI 提示更新包保存路径（下载/xxx.apk），自动安装失败可手动兜底。
+  3. **AGENTS.md** 新增「版本号强制递增」规则：每次更新必须至少递增小/中/大版本号（默认 c 位 +1），严禁不递增版本号发布。
+- **构建**：环境被重置，`scripts/build-release.sh` 全自动自愈（Flutter 3.47.1 官方源直下约 2.5h；Android SDK cmdline-tools + 依赖全部缓存）。Gradle 阶段首次 **635s OOM**（cgroup 4G 杀死 daemon，首次并发下载依赖内存峰值超限），**依赖缓存后重试成功**。
+- **脚本自愈修复（本次沉淀，`scripts/build-release.sh`）**：
+  - `sdkmanager --list` 回退分支 `|| echo platforms;android-34` 未加引号被 shell 拆成命令 → 改为循环重试 + `${VAR:-platforms;android-34}` 兜底；
+  - `flutter analyze` 只要存在任意 issue（含 info）就返回非零，`set -e` 直接终止 → 改为 `--no-fatal-infos` 落日志，仅 grep 到 `error/warning` 才终止；
+  - Release tag / 产物名未剥离 `+<build>` 构建号（曾误生成 `v0.7.6+23`）→ `VERSION="${VERSION%%+*}"`；
+  - 签名：本地无 `feature/signing-config` 分支时先 `git fetch origin` 再建本地 ref（仅本地，绝不合并 main）；签名文件缺失直接终止，防止产出 debug 签名 APK；
+  - 启用 release 签名：`android/app/build.gradle.kts` 以 `project.hasProperty("signingEnabled")` 为准，脚本构建前向 `android/gradle.properties` 注入 `signingEnabled=true`，`trap` 保证构建后恢复。
+- **签名**：`apksigner verify --print-certs` → `CN=STDeel`（与历史一致）。产物 **app-0.7.6.apk 74.3MB**。
+- **发布**：`git push` 源码到 `main`（commit `6bbd7b2`）；`gh release create v0.7.6 --prerelease app-0.7.6.apk`（0.7.6 < 1.0.0 → Pre-Release）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.6
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.6.apk`，保持 `main` 干净。

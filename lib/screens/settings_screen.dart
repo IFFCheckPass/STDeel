@@ -162,6 +162,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final progress = ValueNotifier<double>(0);
     final done = ValueNotifier<bool?>(null);
     final errorMsg = ValueNotifier<String?>(null);
+    // 更新包保存到系统下载目录后的文件名（用于提示手动兜底）
+    final savedName = ValueNotifier<String?>(null);
+    final pkgName = 'STDeel_${info.tagName}.apk';
 
     // 立即启动下载（与对话框并行，进度实时回填）
     unawaited(() async {
@@ -171,8 +174,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onProgress: (received, total) =>
               progress.value = total > 0 ? received / total : 0,
           cancelToken: cancelToken,
+          fileName: pkgName,
         );
-        await update.installPackage(path);
+        final name = await update.installPackage(path, fileName: pkgName);
+        savedName.value = name;
         done.value = true;
       } catch (e) {
         if (cancelToken.isCancelled) return; // 用户取消，静默退出
@@ -217,7 +222,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   )
                 : Text(
                     v == true
-                        ? '已下载更新包，即将拉起安装器。'
+                        ? '更新包已保存到系统「下载」目录'
+                            '（下载/${savedName.value ?? pkgName}），即将拉起安装器。\n'
+                            '若未自动安装，可在文件管理器中找到该文件手动安装。'
                         : '更新失败：$error',
                     style: const TextStyle(fontSize: 13, height: 1.6),
                   ),
@@ -245,12 +252,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     progress.dispose();
     done.dispose();
     errorMsg.dispose();
+    savedName.dispose();
 
     if (!mounted) return;
     if (ok == true) {
       showGlassSnackBar(
         context,
-        '已下载并拉起安装器，请按系统提示完成安装（若提示未知来源，请先授权）',
+        '已拉起系统安装器，请按提示完成安装。更新包保存在「下载」目录'
+        '（${savedName.value ?? pkgName}），若未自动安装可在文件管理器中手动打开。',
         success: true,
       );
     } else if (ok == false) {
@@ -657,7 +666,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: TextStyle(fontWeight: FontWeight.w600)),
                     const Spacer(),
                     Text(
-                      '版本 v0.7.5',
+                      '版本 v0.7.6',
                       style: TextStyle(fontSize: 12, color: G.textSecondary),
                     ),
                   ],
@@ -786,7 +795,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.7.5',
+              '思谛 STDeel · v0.7.6',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
