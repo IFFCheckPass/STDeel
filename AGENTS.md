@@ -37,6 +37,10 @@
 - 打包好的 APK 按前述产物命名规则（`app-<版本号>.apk`）与版本发布规则（Release / Pre-Release 判定）**自主上传到 GitHub Releases**。
 - **每次成功编译后，将一整套环境准备与编译过程（工具链安装/依赖/签名/构建/上传命令）写入 `docs/BUILD.md`**，以备下次使用；该文档随仓库提交同步到 `main`。
 - Windows 桌面版构建流程单独记录于 **`docs/BUILD-win.md`**（随 Windows 分支维护）；Windows 构建产物命名 `stdeel-setup-<版本号>.exe`，上传到同一版本 tag 的 GitHub Release（Release/Pre-Release 判定与 APK 一致）。
+- **双端同步发布（强制，不可协商）**：
+  - **每次版本更新发布，必须同时产出 Android APK（`app-<版本号>.apk`）与 Windows 安装器（`stdeel-setup-<版本号>.exe`）双端产物，并上传到同一版本 tag 的 GitHub Release**，不允许只发布单端。
+  - 流程：APK 由本仓库 `main` 直接构建发布；exe 由 `build-windows` GitHub Actions 在 `feature/windows-support` 分支（合并最新 `main` 后）自动构建并 `gh release upload v<版本号> --clobber` 上传。
+  - 因此**每次改代码发布时，除提交推送 `main` 外，必须将 `main` 合并同步到 `feature/windows-support` 并 push 触发 Windows 构建**，然后确认该版本 tag 下 APK 与 exe 均已就位。
 
 ### 版本发布规则（GitHub Release / Pre-Release）
 - 版本号由 `pubspec.yaml` 的 `version` 决定，同步更新 `lib/screens/settings_screen.dart` 底部角标文案。
