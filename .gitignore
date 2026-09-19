@@ -47,3 +47,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 签名密钥（仅存在于 feature/signing-config 分支，严禁并入 main）
+android/upload-keystore.jks
+android/key.properties
