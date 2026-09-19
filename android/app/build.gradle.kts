@@ -30,6 +30,12 @@ android {
             storePassword = prop.getProperty("storePassword", "")
             keyAlias = prop.getProperty("keyAlias", "")
             keyPassword = prop.getProperty("keyPassword", "")
+            // 显式开启全部签名方案（v1+v2+v3）：
+            // 部分系统安装器/ROM 对仅 v2 签名的 APK 兼容性差（可能提示“没有证书”），
+            // 全部开启可确保任意 Android 7.0+ 设备都能识别证书。
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

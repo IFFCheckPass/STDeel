@@ -341,3 +341,16 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布**：`git push` 源码到 `main`（commit `6bbd7b2`）；`gh release create v0.7.6 --prerelease app-0.7.6.apk`（0.7.6 < 1.0.0 → Pre-Release）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.6
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.6.apk`，保持 `main` 干净。
+
+### v0.7.6 重签覆盖发布（✅ 用户反馈安装提示「没有证书」）
+- **用户反馈**：下载 v0.7.6 APK 两次安装均提示「没有证书」。
+- **取证（环境再次被重置，无 apksigner）**：纯 Python 解析 APK Signing Block 提取 v2 签名者证书（openssl 比对）+ 重新下载 build-tools（`https://dl.google.com/android/repository/build-tools_r36_linux.zip`，注意是下划线 `_`，非 `-`）权威校验：
+  - **原发布 v0.7.6 与 v0.7.5 的 APK 签名完全有效**：`apksigner verify` → `Verifies`，v2=true；证书 CN=STDeel、SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`、RSA 2048、有效期至 2056——与历史（v0.5.1 起）**完全一致**，未过期。
+  - **问题点**：APK 仅 **v2 签名（v1=false、v3=false）**——AGP 9.1.0 产物为 v2-only。部分系统安装器/ROM 对仅 v2 签名包兼容性差（表现为「没有证书」类报错），且此前曾误发布过 debug 签名包，用户设备可能残留旧包冲突。
+- **修复**：
+  1. `feature/signing-config` 分支取回 `upload-keystore.jks`+`key.properties`（alias=stdeel），确认 keystore 证书指纹与历史一致；
+  2. 用 `apksigner sign --ks ... --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true` 对已构建的 v0.7.6 重签 → **v1+v2+v3 全签名**，证书不变（jarsigner 验证 v1 有效、apksigner 验证 v2/v3 有效）；
+  3. `gh release upload v0.7.6 --clobber` 覆盖发布，双端产物齐全（`app-0.7.6.apk` 74,368,007B + `stdeel-setup-0.7.6.exe`）；
+  4. 管线防复发：`android/app/build.gradle.kts` 的 release signingConfig 显式 `enableV1Signing/enableV2Signing/enableV3Signing = true`，确保后续 `flutter build apk --release` 直接产出 v1+v2+v3 全签名包，无需再手工重签。
+- **使用提示（给用户）**：若设备上曾安装过旧的（debug 签名）v0.7.6 包，需先卸载旧包再安装新包（签名不同无法覆盖升级）；若为正常升级（旧版为 STDeel 签名），可直接安装。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/*.apk`，保持 `main` 干净。

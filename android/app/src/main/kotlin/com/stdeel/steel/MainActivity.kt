@@ -75,9 +75,17 @@ class MainActivity : FlutterActivity() {
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                     values,
                 ) ?: throw Exception("无法在下载目录创建条目")
+                val srcLen = src.length()
                 resolver.openOutputStream(uri)?.use { out ->
                     src.inputStream().use { it.copyTo(out) }
                 } ?: throw Exception("无法写入下载目录")
+                // 完整性校验：转存结果必须与源文件大小一致，防止截断导致
+                // 安装器报"没有证书/解析失败"
+                val copiedLen = resolver.openAssetFileDescriptor(uri, "r")?.length ?: -1L
+                if (copiedLen != srcLen) {
+                    resolver.delete(uri, null, null)
+                    throw Exception("更新包转存不完整（$copiedLen/$srcLen 字节），已清理")
+                }
                 values.clear()
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
@@ -95,6 +103,10 @@ class MainActivity : FlutterActivity() {
                 if (!dir.exists()) dir.mkdirs()
                 val dest = File(dir, safeName)
                 src.copyTo(dest, overwrite = true)
+                if (dest.length() != src.length()) {
+                    dest.delete()
+                    throw Exception("更新包转存不完整（${dest.length()}/${src.length()} 字节），已清理")
+                }
                 result.success(
                     mapOf(
                         "uri" to "",

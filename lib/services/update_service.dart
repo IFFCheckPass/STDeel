@@ -254,11 +254,15 @@ class UpdateService {
   ///
   /// GitHub 发布 CDN 直连偶发"连接被挂起/中断"（表现为进度长时间停在 0%），
   /// 因此采用短连接超时（10s）+ 最多 3 次重试；取消则抛"已取消更新"。
+  ///
+  /// [expectedSize] 为 GitHub Release 记录的包体大小（字节）；下载完成后校验
+  /// 实际大小与 APK/EXE 魔数，防止**传输中途截断导致安装器报"没有证书/解析失败"**。
   Future<String> downloadPackage(
     String url, {
     void Function(int received, int total)? onProgress,
     CancelToken? cancelToken,
     String? fileName,
+    int? expectedSize,
   }) async {
     // Windows 直接落在系统下载目录（~/Downloads），便于检测与手动兜底安装
     final dir = Platform.isWindows
@@ -283,8 +287,25 @@ class UpdateService {
               onProgress?.call(received, total),
           cancelToken: cancelToken,
         );
-        if (!File(dest).existsSync()) {
+        final f = File(dest);
+        if (!f.existsSync()) {
           throw '下载失败：未生成 ${Platform.isWindows ? '安装器' : '更新包'} 文件';
+        }
+        // 完整性校验：大小 + 魔数（ZIP 的 PK\x03\x04 / 空 ZIP 的 PK\x05\x06）
+        final actual = f.lengthSync();
+        if (expectedSize != null && expectedSize > 0 && actual != expectedSize) {
+          throw '下载不完整：期望 $expectedSize 字节，实际 $actual 字节'
+              '（传输被截断，请重试）';
+        }
+        if (ext == '.apk') {
+          final raf = f.openSync();
+          final head = raf.readSync(4);
+          raf.closeSync();
+          if (!(head.length == 4 &&
+              head[0] == 0x50 && head[1] == 0x4B &&
+              (head[2] == 0x03 || head[2] == 0x05) && head[3] == 0x04)) {
+            throw '下载文件损坏：不是有效的 APK 安装包';
+          }
         }
         return dest;
       } on DioException catch (e) {
