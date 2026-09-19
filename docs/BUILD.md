@@ -354,3 +354,22 @@ rm -f android/upload-keystore.jks android/key.properties
   4. 管线防复发：`android/app/build.gradle.kts` 的 release signingConfig 显式 `enableV1Signing/enableV2Signing/enableV3Signing = true`，确保后续 `flutter build apk --release` 直接产出 v1+v2+v3 全签名包，无需再手工重签。
 - **使用提示（给用户）**：若设备上曾安装过旧的（debug 签名）v0.7.6 包，需先卸载旧包再安装新包（签名不同无法覆盖升级）；若为正常升级（旧版为 STDeel 签名），可直接安装。
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`/tmp/*.apk`，保持 `main` 干净。
+
+### v0.7.7（✅ 已成功编译并发布，小版本更新：0.7.6 → c 位 +1）
+- **背景**：用户再次反馈「下载 v0.7.6 APK 两次安装均提示没有证书」，要求重新打包发布、确保有证书且签名与之前一致。
+- **版本**：`pubspec.yaml version: 0.7.7+24`；`settings_screen.dart` 底部文案与更新卡片均 `v0.7.7`。
+- **取证（关键结论）**：
+  - 从 GitHub 重新下载已发布的 `app-0.7.6.apk`（74,368,007B）用 `apksigner verify --verbose` 验证：**v2/v3 均通过、证书 CN=STDeel、SHA-256 `ed7379e8...`，签名本身有效** → 排除「发布的包无证书」。
+  - **根因定位为下载/转存过程文件截断损坏**：旧版本下载后只做「文件存在」检查，不校验大小/内容；文件传一半时安装器无法解析签名块 → 报「没有证书」。
+- **本次修复（从根源解决，非重签补丁）**：
+  1. `lib/services/update_service.dart` `downloadPackage`：新增 `expectedSize` 参数——下载完成后校验**实际大小 == GitHub 记录大小**，并检查 **APK 魔数**（ZIP 头 `PK\x03\x04`，空 ZIP `PK\x05\x06`），大小/魔数不符即抛「下载不完整」错误并重试，防止截断包流入安装器；
+  2. `android/.../MainActivity.kt` `publishToDownloads`：MediaStore 转存（Android 10+）与 `copyTo` 直拷（Android 9-）后均**校验转存大小与源文件一致**，不一致即删除并抛「转存不完整」异常，防止转存截断；
+  3. `lib/screens/settings_screen.dart`：调用 `downloadPackage` 时传入 `expectedSize: info.pkgSize`；
+  4. `android/app/build.gradle.kts`：release signingConfig 显式 `enableV1Signing/enableV2Signing/enableV3Signing = true`（Gradle 产物直接带 v1 签名文件；apksigner 默认按 minSdk 24 跳过 v1 校验，用 `--min-sdk-version 21` 可验证 v1=true，jarsigner 亦通过）。
+- **签名验证（v0.7.7 产物 app-0.7.7.apk 74,372,963B）**：
+  - `apksigner verify --verbose --min-sdk-version 21` → **v1=true、v2=true、v3=true**，证书 CN=STDeel、SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`（与 v0.5.1 起所有历史版本一致）；SHA-1 `d2c1240651...`。
+- **构建**：`flutter build apk --release -PsigningEnabled`（签名文件取自 `feature/signing-config`，仅本地构建用，不并入 main）。产物 **app-0.7.7.apk 74.4MB**。
+- **发布（双端）**：`git push` 源码到 `main`（commit `864b830`）；`gh release create v0.7.7 --prerelease`（0.7.7 < 1.0.0 → Pre-Release）并上传 `app-0.7.7.apk`；`feature/windows-support` 分支用 `git checkout origin/main -- .` 同步共享代码（保留 `windows/` 专属文件，避免 unrelated-history 冲突）后 push，触发 build-windows Actions 构建 `stdeel-setup-0.7.7.exe` 并自动上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.7
+- **给用户的安装提示**：请通过应用内「设置 → 检查更新」或本 Release 重新下载安装；若设备曾装过 debug 签名的旧包需先卸载。本版本下载链路已加双重完整性校验，可避免再次出现「没有证书」。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.7.apk`，保持 `main` 干净。
