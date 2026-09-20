@@ -373,3 +373,19 @@ rm -f android/upload-keystore.jks android/key.properties
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.7
 - **给用户的安装提示**：请通过应用内「设置 → 检查更新」或本 Release 重新下载安装；若设备曾装过 debug 签名的旧包需先卸载。本版本下载链路已加双重完整性校验，可避免再次出现「没有证书」。
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.7.apk`，保持 `main` 干净。
+
+### v0.7.8（✅ 已成功编译并发布，小版本更新：0.7.7 → c 位 +1，修复 HarmonyOS「没有证书」）
+- **背景**：用户反馈 0.7.6/0.7.7 在荣耀 30（HarmonyOS 4.2.0.121）安装提示「没有证书」，而 0.7.4 及以前版本安装正常。**0.7.4 为绝对可用基准**（0.7.5 曾两次发布且其中一次含全模型调用失败回归，不作可靠参照）。
+- **根因（重点比对新旧签名差异）**：
+  - 对已发布资产逐一 `apksigner verify --verbose` 对比：**0.7.4 = v1(false)/v2(true)/v3(false) 仅 v2 签名**，可正常安装；**0.7.6 重签版与 0.7.7 = v1+v2+v3 全签名**，HarmonyOS 4.2 报「没有证书」。
+  - 结论：HarmonyOS 4.2（荣耀 30）对 **v1+v2+v3 全签名 APK 兼容性差**；证书本身始终为 CN=STDeel、SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`（自 v0.5.1 起未变），**差异只在签名方案**。
+- **修复**：`android/app/build.gradle.kts` release signingConfig 显式固定「仅 v2」：
+  `enableV1Signing=false; enableV2Signing=true; enableV3Signing=false`（与 0.7.4 完全一致）；AGENTS.md 新增「APK 签名方案强制规则」，严禁再开启 v1/v3。
+- **签名验证（0.7.8 产物 app-0.7.8.apk 74,302,208B）**：
+  - `apksigner verify --verbose` → **v1=false、v2=true、v3=false**（与 0.7.4 逐项一致）；APK 内无 `META-INF/*.RSA`（v1）文件；
+  - `apksigner verify --print-certs` → 证书 DN `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`、SHA-1 `d2c1240651...`——与 0.7.4 基准包（下载自 GitHub Release）**完全一致**。
+- **构建**：Flutter SDK 3.47.1 官方源直下极慢（约 20KB/s），改用国内镜像 `https://storage.flutter-io.cn/.../flutter_linux_3.47.1-stable.tar.xz`（约 10MB/s，2.5 分钟）；`pub get`/引擎产物同样走 `pub.flutter-io.cn`/`storage.flutter-io.cn` 镜像。Android SDK：cmdline-tools + platform-tools + platforms;android-36 + build-tools;36.0.0。
+  - **⚠️ 构建 OOM 复发**：首次 Gradle 阶段 Gradle/Kotlin daemon 反复 `OutOfMemoryError: Metaspace` 卡死（`-XX:MaxMetaspaceSize=320m` 不足）。调优 `android/gradle.properties`：`-Xmx1280m -XX:MaxMetaspaceSize=512m`（cgroup 内存上限 4G 内可行），并清理残留 daemon 后重跑 Gradle 阶段 **374s** 成功，产物 **app-release.apk 74.3MB**。
+- **发布（双端）**：`gh release create v0.7.8 --prerelease`（0.7.8 < 1.0.0 → Pre-Release）并上传 `app-0.7.8.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.7.8.exe` 并自动上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.8
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.8.apk`，保持 `main` 干净。

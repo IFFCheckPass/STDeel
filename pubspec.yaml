@@ -1,7 +1,7 @@
 name: stdeel
 description: 思谛 STDeel - 拍照识题与 AI 解题学习软件
 publish_to: 'none'
-version: 0.7.7+24
+version: 0.7.8+25
 
 environment:
   sdk: '>=3.5.0 <4.0.0'

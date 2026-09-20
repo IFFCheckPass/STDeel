@@ -30,12 +30,14 @@ android {
             storePassword = prop.getProperty("storePassword", "")
             keyAlias = prop.getProperty("keyAlias", "")
             keyPassword = prop.getProperty("keyPassword", "")
-            // 显式开启全部签名方案（v1+v2+v3）：
-            // 部分系统安装器/ROM 对仅 v2 签名的 APK 兼容性差（可能提示“没有证书”），
-            // 全部开启可确保任意 Android 7.0+ 设备都能识别证书。
-            enableV1Signing = true
+            // 签名方案固定为「仅 v2」：
+            // 实测荣耀 30（HarmonyOS 4.2）对 v1+v2+v3 全签名 APK 报"没有证书"无法安装，
+            // 而仅 v2 签名的 0.7.4 绝对可用（证书相同，差异只在签名方案；
+            // 0.7.5 曾两次发布且含回归，不作可靠参照）。
+            // 故显式关闭 v1/v3，保持与 0.7.4 完全一致的 v2-only 签名。
+            enableV1Signing = false
             enableV2Signing = true
-            enableV3Signing = true
+            enableV3Signing = false
         }
     }
 

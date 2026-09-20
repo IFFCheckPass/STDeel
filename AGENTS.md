@@ -42,6 +42,14 @@
   - 流程：APK 由本仓库 `main` 直接构建发布；exe 由 `build-windows` GitHub Actions 在 `feature/windows-support` 分支（合并最新 `main` 后）自动构建并 `gh release upload v<版本号> --clobber` 上传。
   - 因此**每次改代码发布时，除提交推送 `main` 外，必须将 `main` 合并同步到 `feature/windows-support` 并 push 触发 Windows 构建**，然后确认该版本 tag 下 APK 与 exe 均已就位。
 
+### APK 签名方案强制规则（不可协商）
+- **Android APK 签名方案必须固定为「仅 v2」（`enableV1Signing = false; enableV2Signing = true; enableV3Signing = false`）**，与 0.7.4 完全一致，见 `android/app/build.gradle.kts`。
+- **严禁开启 v1 / v3 签名**：实测荣耀 30（HarmonyOS 4.2）对 v1+v2+v3 全签名 APK 报"没有证书"无法安装（0.7.6/0.7.7 曾因此安装失败），而仅 v2 签名的 **0.7.4 为绝对可用基准**（0.7.5 曾两次发布且其中一次含全模型调用失败回归，不作可靠参照）。
+- 发布前必须用 `apksigner verify --print-certs`（或等价工具）确认产物：**只含 v2 签名块**、证书为 `CN=STDeel`（SHA256 `ED:73:79:E8:34:86:70:43:22:DB:A4:33:61:DD:E1:6C:30:7F:E6:4F:8F:DA:BD:C7:E4:37:F7:0E:B4:57:F9:33`）。若产物含 `META-INF/*.RSA`（v1）或 v3 签名块，必须修复配置后重新构建。
+- 同时严禁以下操作（历史教训，已造成用户安装失败）：
+  - 严禁以"兼容性更好"为由开启 v1+v2+v3 全签名——方向与实测相反；
+  - 严禁不校验签名方案就直接覆盖已发布 Release 的 APK 资产。
+
 ### 版本发布规则（GitHub Release / Pre-Release）
 - 版本号由 `pubspec.yaml` 的 `version` 决定，同步更新 `lib/screens/settings_screen.dart` 底部角标文案。
 - tag 格式沿用 `v<版本号>`（如 `v0.5.0`）。
