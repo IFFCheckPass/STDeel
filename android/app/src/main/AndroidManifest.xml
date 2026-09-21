@@ -5,6 +5,14 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- 后台解题：CPU 唤醒锁，防止 Doze/App Standby 挂起网络切断 AI 流 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- 后台解题：前台服务（防国产 ROM 冻结后台进程） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Android 14+（targetSdk 34）要求按类型声明前台服务 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Android 13+：前台服务通知（未授予则仅隐藏通知，服务仍正常运行） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="思谛"
         android:name="${applicationName}"
@@ -47,6 +55,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- 后台解题：前台服务保持进程不被冻结 + CPU 唤醒锁防断网 -->
+        <service
+            android:name=".SolveForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
