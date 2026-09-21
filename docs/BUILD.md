@@ -388,4 +388,21 @@ rm -f android/upload-keystore.jks android/key.properties
   - **⚠️ 构建 OOM 复发**：首次 Gradle 阶段 Gradle/Kotlin daemon 反复 `OutOfMemoryError: Metaspace` 卡死（`-XX:MaxMetaspaceSize=320m` 不足）。调优 `android/gradle.properties`：`-Xmx1280m -XX:MaxMetaspaceSize=512m`（cgroup 内存上限 4G 内可行），并清理残留 daemon 后重跑 Gradle 阶段 **374s** 成功，产物 **app-release.apk 74.3MB**。
 - **发布（双端）**：`gh release create v0.7.8 --prerelease`（0.7.8 < 1.0.0 → Pre-Release）并上传 `app-0.7.8.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.7.8.exe` 并自动上传同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.8
-- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.8.apk`，保持 `main` 干净。
+### v0.7.9（✅ 已成功编译并发布，小版本更新：0.7.8 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.9+26`；`settings_screen.dart` 底部文案与更新卡片均 `v0.7.9`。
+- **本次修复**：
+  1. **[t0] 后台 / 切换其他软件时 AI 流式回答必断**（`android/.../SolveForegroundService.kt` 新增 + `MainActivity.kt` 注册通道 + `lib/services/solve_wakelock.dart` 整合）：
+     - 根因：App 放入后台 / 打开其他软件后，Android（尤其荣耀/鸿蒙等国产 ROM）执行激进冻结（App Freeze / App Standby），进程被挂起 → 正在进行的 AI 流式连接被系统切断，恢复前台后需重新开始回答。
+     - 方案（三层保障）：
+       a. **前台服务** `SolveForegroundService`：解题期间 `startForeground` 运行（低重要性通知通道 `stdeel_solve`，不打扰），将进程提升为前台优先级，系统不再冻结进程或挂起网络；
+       b. **PARTIAL_WAKE_LOCK**：服务持有 CPU 唤醒锁，屏幕熄灭/后台时 CPU 保持唤醒，网络不挂起；
+       c. **流式恢复**（`lib/services/ai_service.dart` 新增 `_tryFinishPartial`）：流中断时若已解析到部分回答，则用已接收内容完成结果，不再整段丢失。
+     - 生命周期：`SolveWakelock.acquire()/release()` 引用计数管理，首次 acquire 启动前台服务 + `WakelockPlus.enable()`，全部释放才 `stop` 服务 + `disable()`；stop 用 `stopService`（避免 Android 8+ 后台 `startService` 抛 IllegalStateException）。
+     - AndroidManifest 新增 `WAKE_LOCK` / `FOREGROUND_SERVICE` 权限与服务声明（`foregroundServiceType="dataSync"`）。
+  2. **图片裁切主图不撑满**（`lib/screens/image_edit_screen.dart` `_fitLayout`）：缩放由 `math.min`（contain，留黑边）改为 `math.max`（cover）并移除 0.98 缩放系数，主图宽度或高度至少一个方向撑满屏幕显示区域。
+- **构建**：Flutter SDK 3.47.1（`/opt/flutter`）+ Android SDK（`/opt/android`，含 platform-34/35/36、build-tools 36.0.0）+ JDK17。`flutter build apk --release -PsigningEnabled`，Gradle 阶段约 **1202.7s**（首次含插件 Kotlin 重编 + 自动安装 platform-34/35）。产物 **app-release.apk 74.3MB**。
+- **签名**：`feature/signing-config` 分支取 `upload-keystore.jks`+`key.properties`（不并入 main）；`apksigner verify --verbose` → **v1=false、v2=true、v3=false**（与 0.7.4/0.7.8 基准完全一致）；无 `META-INF/*.RSA`（v1）文件；`--print-certs` → `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`。产物改名 `app-0.7.9.apk`。
+- **发布（双端）**：`git push` 源码到 `main`（commit `0961aa1`）；`feature/windows-support` merge main（解决 pubspec.yaml/pubspec.lock/settings_screen.dart 版本号冲突，取 main 侧 0.7.9，commit `8f82916`）后 push 触发 build-windows Actions；`gh release create v0.7.9 --prerelease`（0.7.9 < 1.0.0 → Pre-Release）并上传 `app-0.7.9.apk`；`stdeel-setup-0.7.9.exe` 由 Actions 自动构建并上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.9
+- **坑（本次新增）**：仓库为浅克隆（shallow）时 `feature/windows-support` 与 `main` 无共同祖先，`git merge` 报 `refusing to merge unrelated histories` → 先 `git fetch --unshallow origin` 拉全历史再 merge。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
