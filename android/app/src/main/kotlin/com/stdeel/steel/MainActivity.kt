@@ -37,6 +37,26 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "stdeel/solve_service",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // 后台解题：启动前台服务（防国产 ROM 冻结进程 + CPU 唤醒锁防 Doze 断网）
+                "start" -> {
+                    val title = call.argument<String>("title") ?: "思谛正在解题"
+                    val text = call.argument<String>("text") ?: "AI 正在后台思考，请稍候…"
+                    SolveForegroundService.start(this, title, text)
+                    result.success(true)
+                }
+                // 解题结束：停止前台服务并释放唤醒锁
+                "stop" -> {
+                    SolveForegroundService.stop(this)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     /**

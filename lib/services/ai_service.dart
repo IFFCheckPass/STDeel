@@ -150,6 +150,27 @@ class AiService {
       }
     }
 
+    /// 流被异常切断（未收到 [DONE]）时的收尾尝试：
+    /// 若已收齐能解析出题目的回答内容，则按成功收尾返回 true；
+    /// 否则返回 false（交由调用方决定重连或报失败）。
+    bool _tryFinishPartial(String reasoningContent, String answerContent) {
+      if (answerContent.isEmpty) return false;
+      final questions = _parseAnswer(answerContent);
+      if (questions.isEmpty) return false;
+      _safeAdd(
+        controller,
+        AiDone(SolveResult(
+          questions: questions,
+          aiModel: model.name,
+          latencyMs: stopWatch.elapsedMilliseconds,
+          tokensUsed: _estimateTokens(reasoningContent, answerContent),
+          source: 'ai',
+        )),
+      );
+      if (!completer.isCompleted) completer.complete();
+      return true;
+    }
+
     /// 重置 think 计时（同模型重连后，重新等待模型首字输出）
     /// 注意：必须用可空 Timer，首次 resetThinkTimer() 时 thinkTimer 尚未赋值，
     /// 若用 `late` 无初始化器变量，`thinkTimer?.cancel()` 读取会抛
@@ -306,32 +327,22 @@ class AiService {
       } catch (e) {
         // 取消触发的异常：completer 已由计时器完成，忽略
         if (!completer.isCompleted) {
-          // 网络中断且尚未输出任何内容 → 可重连；否则按失败处理
-          if (canRetry && answerContent.isEmpty) return false;
+          // 网络中断（含后台挂起后连接被切断）：
+          //   - 已收齐可解析的完整回答 → 直接收尾（不误报失败/不误切模型）；
+          //   - 回答被截断（JSON 不完整）→ 还有重连机会则重发请求，
+          //     让同模型重新完整作答，避免展示截断答案或切到下一个模型后
+          //     从头再来（v0.7.9 后台解题修复的兜底逻辑）。
+          if (_tryFinishPartial(reasoningContent, answerContent)) return true;
+          if (canRetry) return false;
           fail('流解析异常（${model.name}）: $e');
         }
         return true;
       }
 
       thinkTimer?.cancel();
-      // 流自然结束但未收到 [DONE]
+      // 流自然结束但未收到 [DONE]：连接被异常切断（后台挂起/服务器断开）。
       if (completer.isCompleted) return true;
-      if (answerContent.isNotEmpty) {
-        final questions = _parseAnswer(answerContent);
-        _safeAdd(
-          controller,
-          AiDone(SolveResult(
-            questions: questions,
-            aiModel: model.name,
-            latencyMs: stopWatch.elapsedMilliseconds,
-            tokensUsed: _estimateTokens(reasoningContent, answerContent),
-            source: 'ai',
-          )),
-        );
-        completer.complete();
-        return true;
-      }
-      // 无任何内容且流提前结束（连接被切断）→ 可重连
+      if (_tryFinishPartial(reasoningContent, answerContent)) return true;
       if (canRetry) return false;
       fail('${model.name} 连接已断开且未返回内容');
       return true;

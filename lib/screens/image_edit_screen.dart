@@ -106,7 +106,8 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
     return _quarterTurns % 2 == 0 ? Size(w, h) : Size(h, w);
   }
 
-  /// 计算背景图片的放置（contain 到视口并留白），并初始化裁切框
+  /// 计算背景图片的放置（cover 撑满视口：宽度或高度至少一个方向撑满屏幕，
+  /// 溢出方向居中裁切，便于稳定取景），并初始化裁切框
   void _fitLayout() {
     if (_viewportSize == Size.zero || _imageSize == ui.Size.zero) return;
     final rs = _rotatedSize;
@@ -114,7 +115,7 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
     final vw = _viewportSize.width;
     final vh = _viewportSize.height;
     final scale =
-        math.min(vw / rs.width, vh / rs.height) * 0.98;
+        math.max(vw / rs.width, vh / rs.height);
     _fitScale = scale;
     _fitOffset = Offset(
       (vw - rs.width * scale) / 2,
