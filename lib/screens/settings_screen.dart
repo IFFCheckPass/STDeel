@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../data/database.dart';
+import '../models/ai_provider.dart' show normalizeBaseUrl;
 import '../providers/settings_provider.dart';
 import '../services/backup_service.dart';
 import '../services/backend_api.dart';

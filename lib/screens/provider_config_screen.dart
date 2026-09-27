@@ -55,7 +55,7 @@ class ProviderConfigScreen extends StatelessWidget {
                   children: [
                     const Icon(Icons.auto_awesome, color: G.accent, size: 18),
                     const SizedBox(width: 10),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         '按供应商配置模型。每个模型以「编号 + 供应商名 + 模型名」展示（如 1-1 Deepseek V4.1Flash）。',
                         style:
@@ -74,7 +74,7 @@ class ProviderConfigScreen extends StatelessWidget {
                       style: TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: const Text('配置「拆图分割 / 读题解答」两阶段的模型顺序与启用',
                       style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(Icons.chevron_right, color: G.textFaint),
+                  trailing: Icon(Icons.chevron_right, color: G.textFaint),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                         builder: (_) => const ModelOrderScreen()),
@@ -111,7 +111,7 @@ class ProviderConfigScreen extends StatelessWidget {
             name: '新供应商',
             baseUrl: '',
             apiKey: '',
-            models: const [],
+            models: <AiModel>[],
           ),
           isNew: true,
         ),
@@ -192,7 +192,7 @@ class _ProviderTile extends StatelessWidget {
                       style: TextStyle(fontSize: 9, color: G.amber)),
                 ),
               const SizedBox(width: 4),
-              const Icon(Icons.chevron_right, color: G.textFaint),
+              Icon(Icons.chevron_right, color: G.textFaint),
             ],
           ),
         ),

@@ -53,7 +53,7 @@ class _ModelOrderScreenState extends State<ModelOrderScreen> {
                 items: splitList,
                 stage: 'split',
                 trailingOf: (e) => e.$1.splitEnabled,
-                nameOf: (e) => e.$2,
+                nameOf: (e) => e.$3,
                 onToggle: (p, m) => s.toggleStage(p.id, m.id, 'split'),
                 onReorder: (p, m, oi, ni) =>
                     s.reorderStage(p.id, m.id, 'split', oi, ni),
@@ -67,7 +67,7 @@ class _ModelOrderScreenState extends State<ModelOrderScreen> {
                 items: solveList,
                 stage: 'solve',
                 trailingOf: (e) => e.$1.solveEnabled,
-                nameOf: (e) => e.$2,
+                nameOf: (e) => e.$3,
                 onToggle: (p, m) => s.toggleStage(p.id, m.id, 'solve'),
                 onReorder: (p, m, oi, ni) =>
                     s.reorderStage(p.id, m.id, 'solve', oi, ni),

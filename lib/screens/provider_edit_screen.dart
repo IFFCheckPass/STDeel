@@ -227,7 +227,7 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                       m.multimodal ? '多模态' : '非多模态',
                       style: TextStyle(fontSize: 11, color: G.textSecondary),
                     ),
-                    trailing: const Icon(Icons.edit_outlined,
+                    trailing: Icon(Icons.edit_outlined,
                         color: G.textFaint, size: 18),
                     onTap: () => _editModel(m),
                   ),

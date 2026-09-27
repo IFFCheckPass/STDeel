@@ -406,3 +406,23 @@ rm -f android/upload-keystore.jks android/key.properties
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.9
 - **坑（本次新增）**：仓库为浅克隆（shallow）时 `feature/windows-support` 与 `main` 无共同祖先，`git merge` 报 `refusing to merge unrelated histories` → 先 `git fetch --unshallow origin` 拉全历史再 merge。
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
+
+### v0.9.0（✅ 已成功编译并发布，中版本巨大更新：0.7.9 → b 位 +1）
+- **版本**：`pubspec.yaml version: 0.9.0+27`；`settings_screen.dart` 底部与更新卡片均 `v0.9.0`。
+- **本次升级（6 大项 + 1 紧急修复）**：
+  1. **供应商化 AI 模型配置**（BREAKING）：`AiCombo` 扁平组合 → `AiProvider`/`AiModel` 层级（`lib/models/ai_provider.dart`）。每供应商含 Base URL/API Key/多模型；每模型自定义名、多模态开关、唯一编号（`供应商序号-模型序号`）；界面统一「用户模型名」`编号+供应商名+模型名`。`SettingsProvider` 重构：`buildSplitChain()/buildSolveChainPlain()/buildSolveChainMultimodal()`。旧 `AiCombo` JSON 加载时自动迁移为单模型供应商。
+  2. **两阶段调用管线**：Stage A 拆图分割（多模态链按 `imageSplitPrompt` 提取题目标记 `needs_multimodal`）→ 答案库匹配（命中直出）→ Stage B 读题解答（未标记题优先非多模态省经费；标记题/回退多模态；多模态与非多模态来自不同供应商时并行 `_streamSolveGroup` + `_emitDone`）。拆图全失败回退整图 streaming。
+  3. **组合配置 UI**：新 `provider_config_screen.dart`/`provider_edit_screen.dart`/`model_edit_screen.dart`/`model_order_screen.dart`（拆图分割仅多模态 / 读题解答两板块，拖动排序+点击启停）。删除旧 `combo_edit_screen.dart`。
+  4. **设置页卡片化**：每类设置改为可折叠 `_ExpCard`（默认折叠，点击展开，缩屏）。
+  5. **本地备份**：`backup_service.dart` 导出/导入 JSON（解题记录+知识点），`file_picker` 存取、幂等去重；`solve_record_dao` 增 `existsBySourceKey/insertFromBackup`，`knowledge_dao` 增 `importAbsolute`。
+  6. **照片编辑底图全屏适配（紧急）**：`image_edit_screen.dart` 底图改为显式未旋转尺寸渲染（RotatedBox 奇数转交换宽高后显示恰为 `_rotatedSize`），cover 缩放 `_fitScale/_fitOffset` 与显示尺寸精确一致，保证底图始终撑满视口、旋转无黑边/偏差。
+- **环境重建（/opt 全部被清空，自动自愈）**：Flutter 3.47.1 用 `storage.flutter-io.cn` 镜像（2.5 分钟）装到 `/opt/flutter`；Android SDK 从 `mirrors.cloud.tencent.com/AndroidSDK/` 直下 `platform-36_r02.zip`（→`platforms/android-36`）、`build-tools_r36_linux.zip`（→`build-tools/36.0.0`，内层为 `android-16/` 需摊平重命名）、`platform-tools_r37.0.1-linux.zip`、`android-ndk-r28c-linux.zip`（→`ndk/28.2.13676358`）；platform-35 dl.google 可直下、platform-34 腾讯/阿里镜像均无 base（404），改用 sdkmanager `JAVA_HOME=.../java/17.0.2` 安装后由 Gradle 自动补装。
+- **⚠️ dl.google 不稳定 / 镜像缺包新坑**：
+  - `sdkmanager --install` 在 JDK25 下静默退出 → 必须显式 `export JAVA_HOME=/root/.local/share/mise/installs/java/17.0.2`；
+  - Gradle 挂等 platform-34/35 下载（dl.google 不可靠）→ 用腾讯镜像 zip 手动摊平到 `platforms/`，或将插件 compileSdk 全部抬到 36 以跳过 34：`sed -i -E 's/compileSdk(Version)? +3[0-4] */compileSdk\1 36/' .../wakelock_plus|package_info_plus|flutter_local_notifications/android/build.gradle`；
+  - Flutter AOT 引擎 artifact 未缓存时 `flutter build` 卡在 `storage.googleapis.com` → 先 `export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter` 再 `flutter precache --android`。
+- **构建**：`flutter build apk --release -PsigningEnabled`，analyze 0 error、`flutter test` 全绿；Gradle 阶段约 **503.4s**。产物 **app-release.apk 74.6MB**，改名 `app-0.9.0.apk`。
+- **签名**：`feature/signing-config` 取 jks/key.properties（不并入 main）；`apksigner verify --verbose` → **v1=false、v2=true、v3=false**；无 `META-INF/*.RSA`（v1）；`--print-certs` → `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`。
+- **发布（双端）**：`gh release create v0.9.0 --prerelease`（0.9.0 < 1.0.0 → Pre-Release）并上传 `app-0.9.0.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.0.exe` 并自动上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.0
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。

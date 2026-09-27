@@ -455,7 +455,14 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                   alignment: Alignment.topLeft,
                   child: RotatedBox(
                     quarterTurns: _quarterTurns,
-                    child: Image.memory(_bytes!, gaplessPlayback: true),
+                    child: Image.memory(_bytes!,
+                        gaplessPlayback: true,
+                        // 显式给【未旋转】尺寸：RotatedBox 奇数转会交换宽高，
+                        // 故最终显示尺寸恰等于 _rotatedSize，与 cover 缩放
+                        // （_fitScale/_fitOffset，基于 _rotatedSize）精确匹配，
+                        // 保证底图始终撑满视口、无黑边。
+                        width: _imageSize.width,
+                        height: _imageSize.height),
                   ),
                 ),
               ),

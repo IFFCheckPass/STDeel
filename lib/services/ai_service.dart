@@ -470,8 +470,7 @@ class AiService {
           if (e.response != null)
             'response：${e.response?.statusCode} ${e.response?.statusMessage}',
           '请求：${e.requestOptions.method} ${e.requestOptions.uri}',
-          if (e.stackTrace != null)
-            '堆栈：${e.stackTrace.toString().split('\n').take(6).join('\n')}',
+          '堆栈：${e.stackTrace.toString().split('\n').take(6).join('\n')}',
         ].join('\n');
         FaultLogService.instance.record(
             source: source,
