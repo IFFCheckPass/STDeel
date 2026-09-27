@@ -30,9 +30,9 @@
 
 ## 版本与发布
 - [x] `pubspec.yaml` 版本 0.9.0+27，设置页角标/更新文案为 v0.9.0
-- [ ] APK 构建成功且 `apksigner verify` 仅 v2、证书 CN=STDeel（SHA-256 与基准一致）
-- [ ] Windows EXE 构建上传同 tag；v0.9.0（≥1.0.0 判正式/预发布）双端产物符合 AGENTS.md
-- [ ] `docs/BUILD.md` 记录本次构建发布过程
+- [x] APK 构建成功且 `apksigner verify` 仅 v2（v1=false/v2=true/v3=false）、证书 CN=STDeel（SHA-256 `ed7379e8...` 与基准一致）
+- [x] Windows EXE 构建上传同 tag；v0.9.0（<1.0.0 → Pre-Release）双端产物 `app-0.9.0.apk` + `stdeel-setup-0.9.0.exe` 均就位，符合 AGENTS.md
+- [x] `docs/BUILD.md` 记录本次构建发布过程
 
 ## 紧急：照片编辑底图全屏适配
 - [x] 底图改为显式未旋转尺寸渲染，cover 缩放（`_fitScale/_fitOffset`）与 `_rotatedSize` 精确一致，旋转后无黑边/偏差、始终撑满视口
