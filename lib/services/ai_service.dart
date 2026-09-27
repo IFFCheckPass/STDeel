@@ -470,8 +470,7 @@ class AiService {
           if (e.response != null)
             'response：${e.response?.statusCode} ${e.response?.statusMessage}',
           '请求：${e.requestOptions.method} ${e.requestOptions.uri}',
-          if (e.stackTrace != null)
-            '堆栈：${e.stackTrace.toString().split('\n').take(6).join('\n')}',
+          '堆栈：${e.stackTrace.toString().split('\n').take(6).join('\n')}',
         ].join('\n');
         FaultLogService.instance.record(
             source: source,
@@ -661,10 +660,13 @@ class AiService {
     int timeoutSeconds = 180,
     // 故障码记录来源（功能界面），如 `AI 调用 · 知识点整理`
     String source = 'AI 调用',
+    // 系统提示词：默认用答案库文档拆分提示词；
+    // 拆图分割等场景可传入其他提示词（如 AiConfig.imageSplitPrompt）。
+    String? systemPrompt,
   }) async {
     final url = '${model.endpoint}/chat/completions';
     final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': AiConfig.documentSplitPrompt},
+      {'role': 'system', 'content': systemPrompt ?? AiConfig.documentSplitPrompt},
     ];
     if (imageDataUrls.isEmpty) {
       messages.add({'role': 'user', 'content': userText});

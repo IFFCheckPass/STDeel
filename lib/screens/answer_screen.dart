@@ -59,11 +59,15 @@ class _AnswerScreenState extends State<AnswerScreen> {
     _solvingTriggered = true;
     final settings = context.read<SettingsProvider>();
     final solve = context.read<SolveProvider>();
-    final models = settings.buildModelChain();
-    if (models.isEmpty) {
+    final splitModels = settings.buildSplitChain();
+    final plainModels = settings.buildSolveChainPlain();
+    final multimodalModels = settings.buildSolveChainMultimodal();
+    if (splitModels.isEmpty &&
+        plainModels.isEmpty &&
+        multimodalModels.isEmpty) {
       showGlassSnackBar(
         context,
-        '请先到「设置 → AI 模型组合」填写 API Key 并启用组合',
+        '请先到「设置 → AI 模型组合」配置供应商与模型',
         error: true,
       );
       return;
@@ -72,7 +76,9 @@ class _AnswerScreenState extends State<AnswerScreen> {
     // 这里仅 fire 一次即可。
     solve.solve(
       imagePath: widget.imagePath!,
-      models: models,
+      splitModels: splitModels,
+      plainModels: plainModels,
+      multimodalModels: multimodalModels,
       thinkTimeout: settings.thinkTimeout,
     );
   }

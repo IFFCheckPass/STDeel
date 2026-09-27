@@ -388,4 +388,41 @@ rm -f android/upload-keystore.jks android/key.properties
   - **⚠️ 构建 OOM 复发**：首次 Gradle 阶段 Gradle/Kotlin daemon 反复 `OutOfMemoryError: Metaspace` 卡死（`-XX:MaxMetaspaceSize=320m` 不足）。调优 `android/gradle.properties`：`-Xmx1280m -XX:MaxMetaspaceSize=512m`（cgroup 内存上限 4G 内可行），并清理残留 daemon 后重跑 Gradle 阶段 **374s** 成功，产物 **app-release.apk 74.3MB**。
 - **发布（双端）**：`gh release create v0.7.8 --prerelease`（0.7.8 < 1.0.0 → Pre-Release）并上传 `app-0.7.8.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.7.8.exe` 并自动上传同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.8
-- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`、`app-0.7.8.apk`，保持 `main` 干净。
+### v0.7.9（✅ 已成功编译并发布，小版本更新：0.7.8 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.7.9+26`；`settings_screen.dart` 底部文案与更新卡片均 `v0.7.9`。
+- **本次修复**：
+  1. **[t0] 后台 / 切换其他软件时 AI 流式回答必断**（`android/.../SolveForegroundService.kt` 新增 + `MainActivity.kt` 注册通道 + `lib/services/solve_wakelock.dart` 整合）：
+     - 根因：App 放入后台 / 打开其他软件后，Android（尤其荣耀/鸿蒙等国产 ROM）执行激进冻结（App Freeze / App Standby），进程被挂起 → 正在进行的 AI 流式连接被系统切断，恢复前台后需重新开始回答。
+     - 方案（三层保障）：
+       a. **前台服务** `SolveForegroundService`：解题期间 `startForeground` 运行（低重要性通知通道 `stdeel_solve`，不打扰），将进程提升为前台优先级，系统不再冻结进程或挂起网络；
+       b. **PARTIAL_WAKE_LOCK**：服务持有 CPU 唤醒锁，屏幕熄灭/后台时 CPU 保持唤醒，网络不挂起；
+       c. **流式恢复**（`lib/services/ai_service.dart` 新增 `_tryFinishPartial`）：流中断时若已解析到部分回答，则用已接收内容完成结果，不再整段丢失。
+     - 生命周期：`SolveWakelock.acquire()/release()` 引用计数管理，首次 acquire 启动前台服务 + `WakelockPlus.enable()`，全部释放才 `stop` 服务 + `disable()`；stop 用 `stopService`（避免 Android 8+ 后台 `startService` 抛 IllegalStateException）。
+     - AndroidManifest 新增 `WAKE_LOCK` / `FOREGROUND_SERVICE` 权限与服务声明（`foregroundServiceType="dataSync"`）。
+  2. **图片裁切主图不撑满**（`lib/screens/image_edit_screen.dart` `_fitLayout`）：缩放由 `math.min`（contain，留黑边）改为 `math.max`（cover）并移除 0.98 缩放系数，主图宽度或高度至少一个方向撑满屏幕显示区域。
+- **构建**：Flutter SDK 3.47.1（`/opt/flutter`）+ Android SDK（`/opt/android`，含 platform-34/35/36、build-tools 36.0.0）+ JDK17。`flutter build apk --release -PsigningEnabled`，Gradle 阶段约 **1202.7s**（首次含插件 Kotlin 重编 + 自动安装 platform-34/35）。产物 **app-release.apk 74.3MB**。
+- **签名**：`feature/signing-config` 分支取 `upload-keystore.jks`+`key.properties`（不并入 main）；`apksigner verify --verbose` → **v1=false、v2=true、v3=false**（与 0.7.4/0.7.8 基准完全一致）；无 `META-INF/*.RSA`（v1）文件；`--print-certs` → `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`。产物改名 `app-0.7.9.apk`。
+- **发布（双端）**：`git push` 源码到 `main`（commit `0961aa1`）；`feature/windows-support` merge main（解决 pubspec.yaml/pubspec.lock/settings_screen.dart 版本号冲突，取 main 侧 0.7.9，commit `8f82916`）后 push 触发 build-windows Actions；`gh release create v0.7.9 --prerelease`（0.7.9 < 1.0.0 → Pre-Release）并上传 `app-0.7.9.apk`；`stdeel-setup-0.7.9.exe` 由 Actions 自动构建并上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.9
+- **坑（本次新增）**：仓库为浅克隆（shallow）时 `feature/windows-support` 与 `main` 无共同祖先，`git merge` 报 `refusing to merge unrelated histories` → 先 `git fetch --unshallow origin` 拉全历史再 merge。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
+
+### v0.9.0（✅ 已成功编译并发布，中版本巨大更新：0.7.9 → b 位 +1）
+- **版本**：`pubspec.yaml version: 0.9.0+27`；`settings_screen.dart` 底部与更新卡片均 `v0.9.0`。
+- **本次升级（6 大项 + 1 紧急修复）**：
+  1. **供应商化 AI 模型配置**（BREAKING）：`AiCombo` 扁平组合 → `AiProvider`/`AiModel` 层级（`lib/models/ai_provider.dart`）。每供应商含 Base URL/API Key/多模型；每模型自定义名、多模态开关、唯一编号（`供应商序号-模型序号`）；界面统一「用户模型名」`编号+供应商名+模型名`。`SettingsProvider` 重构：`buildSplitChain()/buildSolveChainPlain()/buildSolveChainMultimodal()`。旧 `AiCombo` JSON 加载时自动迁移为单模型供应商。
+  2. **两阶段调用管线**：Stage A 拆图分割（多模态链按 `imageSplitPrompt` 提取题目标记 `needs_multimodal`）→ 答案库匹配（命中直出）→ Stage B 读题解答（未标记题优先非多模态省经费；标记题/回退多模态；多模态与非多模态来自不同供应商时并行 `_streamSolveGroup` + `_emitDone`）。拆图全失败回退整图 streaming。
+  3. **组合配置 UI**：新 `provider_config_screen.dart`/`provider_edit_screen.dart`/`model_edit_screen.dart`/`model_order_screen.dart`（拆图分割仅多模态 / 读题解答两板块，拖动排序+点击启停）。删除旧 `combo_edit_screen.dart`。
+  4. **设置页卡片化**：每类设置改为可折叠 `_ExpCard`（默认折叠，点击展开，缩屏）。
+  5. **本地备份**：`backup_service.dart` 导出/导入 JSON（解题记录+知识点），`file_picker` 存取、幂等去重；`solve_record_dao` 增 `existsBySourceKey/insertFromBackup`，`knowledge_dao` 增 `importAbsolute`。
+  6. **照片编辑底图全屏适配（紧急）**：`image_edit_screen.dart` 底图改为显式未旋转尺寸渲染（RotatedBox 奇数转交换宽高后显示恰为 `_rotatedSize`），cover 缩放 `_fitScale/_fitOffset` 与显示尺寸精确一致，保证底图始终撑满视口、旋转无黑边/偏差。
+- **环境重建（/opt 全部被清空，自动自愈）**：Flutter 3.47.1 用 `storage.flutter-io.cn` 镜像（2.5 分钟）装到 `/opt/flutter`；Android SDK 从 `mirrors.cloud.tencent.com/AndroidSDK/` 直下 `platform-36_r02.zip`（→`platforms/android-36`）、`build-tools_r36_linux.zip`（→`build-tools/36.0.0`，内层为 `android-16/` 需摊平重命名）、`platform-tools_r37.0.1-linux.zip`、`android-ndk-r28c-linux.zip`（→`ndk/28.2.13676358`）；platform-35 dl.google 可直下、platform-34 腾讯/阿里镜像均无 base（404），改用 sdkmanager `JAVA_HOME=.../java/17.0.2` 安装后由 Gradle 自动补装。
+- **⚠️ dl.google 不稳定 / 镜像缺包新坑**：
+  - `sdkmanager --install` 在 JDK25 下静默退出 → 必须显式 `export JAVA_HOME=/root/.local/share/mise/installs/java/17.0.2`；
+  - Gradle 挂等 platform-34/35 下载（dl.google 不可靠）→ 用腾讯镜像 zip 手动摊平到 `platforms/`，或将插件 compileSdk 全部抬到 36 以跳过 34：`sed -i -E 's/compileSdk(Version)? +3[0-4] */compileSdk\1 36/' .../wakelock_plus|package_info_plus|flutter_local_notifications/android/build.gradle`；
+  - Flutter AOT 引擎 artifact 未缓存时 `flutter build` 卡在 `storage.googleapis.com` → 先 `export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter` 再 `flutter precache --android`。
+- **构建**：`flutter build apk --release -PsigningEnabled`，analyze 0 error、`flutter test` 全绿；Gradle 阶段约 **503.4s**。产物 **app-release.apk 74.6MB**，改名 `app-0.9.0.apk`。
+- **签名**：`feature/signing-config` 取 jks/key.properties（不并入 main）；`apksigner verify --verbose` → **v1=false、v2=true、v3=false**；无 `META-INF/*.RSA`（v1）；`--print-certs` → `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`。
+- **发布（双端）**：`gh release create v0.9.0 --prerelease`（0.9.0 < 1.0.0 → Pre-Release）并上传 `app-0.9.0.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.0.exe` 并自动上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.0
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。

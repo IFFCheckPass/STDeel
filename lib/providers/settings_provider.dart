@@ -1,7 +1,7 @@
 /// 设置状态管理 - 思谛 STDeel
 ///
 /// 管理：
-///   - AI 模型组合列表（增删改、排序、启用开关，JSON 持久化）
+///   - AI 供应商与模型配置（`List<AiProvider>`，JSON 持久化；供应商→多模型，两阶段启停/排序）
 ///   - think 检测超时阈值
 ///   - 后端 URL 与连通性测试
 library;
@@ -14,7 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../config/ai_config.dart';
 import '../config/app_config.dart';
-import '../models/ai_combo.dart';
+import '../models/ai_provider.dart';
 import '../services/backend_api.dart';
 
 class SettingsProvider extends ChangeNotifier {
@@ -25,23 +25,23 @@ class SettingsProvider extends ChangeNotifier {
   String _publicUrl = AppConfig.defaultBackendUrl;
   String _intranetUrl = '';
   bool _usePublic = true;
-  List<AiCombo> _combos = [];
+  List<AiProvider> _providers = [];
   int _thinkTimeout = AppConfig.defaultThinkTimeoutSeconds;
   bool _pinging = false;
   bool _pingOk = false;
   bool _loaded = false;
   ThemeMode _themeMode = ThemeMode.system;
-  // 账号绑定（默认隐藏）：username 与 api-key 跨端同步，待后端适配后开放。
+  // 账号绑定（默认隐藏）
   String? _username;
 
-  /// 当前使用的后端 URL（按所选通道返回，供旧的单一 URL 字段使用）
+  /// 当前使用的后端 URL（按所选通道返回）
   String get backendUrl => _usePublic
       ? _publicUrl
       : (_intranetUrl.trim().isEmpty ? _publicUrl : _intranetUrl);
   String get backendUrlPublic => _publicUrl;
   String get backendUrlIntranet => _intranetUrl;
   bool get usePublicBackend => _usePublic;
-  List<AiCombo> get combos => List.unmodifiable(_combos);
+  List<AiProvider> get providers => List.unmodifiable(_providers);
   int get thinkTimeout => _thinkTimeout;
   bool get pinging => _pinging;
   bool get pingOk => _pingOk;
@@ -49,9 +49,15 @@ class SettingsProvider extends ChangeNotifier {
   String? get username => _username;
   ThemeMode get themeMode => _themeMode;
 
-  /// 已启用且填写完整的组合
-  List<AiCombo> get availableCombos =>
-      _combos.where((c) => c.enabled && c.isComplete).toList();
+  int get availableModelCount {
+    var n = 0;
+    for (final p in _providers) {
+      for (final m in p.models) {
+        if (m.solveEnabled && p.isComplete) n++;
+      }
+    }
+    return n;
+  }
 
   Future<void> load() async {
     _publicUrl = await _api.getBackendUrlPublic();
@@ -63,88 +69,220 @@ class SettingsProvider extends ChangeNotifier {
     final raw = await _api.getAiCombosJson();
     if (raw != null && raw.isNotEmpty) {
       try {
-        final list = jsonDecode(raw) as List<dynamic>;
-        _combos = list
-            .map((e) => AiCombo.fromJson(e as Map<String, dynamic>))
-            .toList();
+        final decoded = jsonDecode(raw);
+        if (decoded is List && decoded.isNotEmpty) {
+          // 新结构：List<AiProvider>
+          if (decoded.every((e) =>
+              (e as Map).containsKey('baseUrl') && (e).containsKey('models'))) {
+            _providers = decoded
+                .map((e) => AiProvider.fromJson(e as Map<String, dynamic>))
+                .toList();
+          } else if (decoded.first is Map &&
+              (decoded.first as Map).containsKey('modelId')) {
+            // 旧结构：List<AiCombo> → 迁移为单模型供应商
+            _providers = _migrateFromCombos(decoded.cast<Map>());
+          } else {
+            _providers = defaultAiProviders();
+          }
+        } else {
+          _providers = defaultAiProviders();
+        }
       } catch (_) {
-        _combos = defaultAiCombos();
+        _providers = defaultAiProviders();
       }
     } else {
-      _combos = defaultAiCombos();
+      _providers = defaultAiProviders();
     }
     _loaded = true;
     notifyListeners();
-    // 已有绑定用户名时，启动即尝试把本机 AI API Key 上报账号（跨端同步）。
-    // fire-and-forget：后端未适配或网络失败时静默，等待下次启动/手动绑定重试。
     if (_username != null && _username!.isNotEmpty) {
       unawaited(_syncAccountApiKeys());
     }
   }
 
+  /// 迁移旧版扁平组合（AiCombo）为「单模型供应商」
+  /// 每个旧组合 ≈ 一个供应商（含一个模型，继承其多模态与启用）。
+  List<AiProvider> _migrateFromCombos(List<Map> combos) {
+    return combos.map((c) {
+      final modelId = c['modelId'] as String? ?? '';
+      final multimodal = c['multimodal'] as bool? ?? false;
+      final enabled = c['enabled'] as bool? ?? true;
+      final mid =
+          'm-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+      return AiProvider(
+        id: c['id'] as String? ?? 'p-${mid}',
+        name: c['name'] as String? ?? '未命名供应商',
+        baseUrl: c['baseUrl'] as String? ?? '',
+        apiKey: c['apiKey'] as String? ?? '',
+        models: [
+          AiModel(
+            id: mid,
+            name: c['name'] as String? ?? '模型',
+            modelId: modelId,
+            multimodal: multimodal,
+            splitEnabled: multimodal && enabled,
+            splitOrder: 0,
+            solveEnabled: enabled,
+            solveOrder: 0,
+          ),
+        ],
+      );
+    }).toList();
+  }
+
   Future<void> _persist() async {
     await _api.setAiCombosJson(
-      jsonEncode(_combos.map((c) => c.toJson()).toList()),
+      jsonEncode(_providers.map((p) => p.toJson()).toList()),
     );
   }
 
-  // ---------- AI 组合管理 ----------
+  // ---------- 供应商 / 模型管理 ----------
 
-  /// 新增（或更新）组合；id 相同则覆盖
-  Future<void> saveCombo(AiCombo combo) async {
-    final idx = _combos.indexWhere((c) => c.id == combo.id);
+  Future<void> saveProvider(AiProvider provider) async {
+    final idx = _providers.indexWhere((p) => p.id == provider.id);
     if (idx >= 0) {
-      _combos[idx] = combo;
+      _providers[idx] = provider;
     } else {
-      _combos.add(combo);
+      _providers.add(provider);
     }
     await _persist();
     notifyListeners();
   }
 
-  Future<void> deleteCombo(String id) async {
-    _combos.removeWhere((c) => c.id == id);
+  Future<void> deleteProvider(String id) async {
+    _providers.removeWhere((p) => p.id == id);
     await _persist();
     notifyListeners();
   }
 
-  Future<void> toggleCombo(String id, bool enabled) async {
-    final idx = _combos.indexWhere((c) => c.id == id);
-    if (idx < 0) return;
-    _combos[idx] = _combos[idx].copyWith(enabled: enabled);
-    await _persist();
-    notifyListeners();
-  }
-
-  /// 拖动排序（ReorderableListView）
-  Future<void> moveCombo(int oldIndex, int newIndex) async {
-    if (newIndex > oldIndex) newIndex -= 1;
-    if (oldIndex == newIndex) return;
-    final item = _combos.removeAt(oldIndex);
-    _combos.insert(newIndex, item);
-    await _persist();
-    notifyListeners();
-  }
-
-  /// 生成 Failover 调用链。
-  ///
-  /// 排序：支持多模态（视觉/文档识别）的组合稳定排在前面，其余排后，
-  /// 使题目 / 文档分析优先使用多模态模型；同组内保持用户在设置页的排列顺序。
-  List<AiModelConfig> buildModelChain() {
-    final chain = availableCombos.map((c) => c.toModelConfig()).toList();
-    if (chain.length > 1) {
-      // 稳定分区：multimodal 在前、非 multimodal 在后
-      chain.sort((a, b) {
-        if (a.multimodal == b.multimodal) return 0;
-        return a.multimodal ? -1 : 1;
-      });
+  Future<void> saveModel(String providerId, AiModel model) async {
+    final p = _providers.firstWhere((x) => x.id == providerId,
+        orElse: () => throw StateError('供应商不存在'));
+    final idx = p.models.indexWhere((m) => m.id == model.id);
+    if (idx >= 0) {
+      p.models[idx] = model;
+    } else {
+      p.models.add(model);
     }
-    return chain;
+    await _persist();
+    notifyListeners();
   }
+
+  Future<void> deleteModel(String providerId, String modelId) async {
+    final p = _providers.firstWhere((x) => x.id == providerId,
+        orElse: () => throw StateError('供应商不存在'));
+    p.models.removeWhere((m) => m.id == modelId);
+    await _persist();
+    notifyListeners();
+  }
+
+  /// 拖动排序某阶段的模型顺序
+  /// [stage]: 'split' | 'solve'
+  Future<void> reorderStage(String providerId, String modelId, String stage,
+      int oldIndex, int newIndex) async {
+    final p = _providers.firstWhere((x) => x.id == providerId,
+        orElse: () => throw StateError('供应商不存在'));
+    final models = List<AiModel>.from(
+        p.models.where((m) => m.multimodal || stage == 'solve').toList());
+    final currentIdx = models.indexWhere((m) => m.id == modelId);
+    if (currentIdx < 0) return;
+    if (newIndex > currentIdx) newIndex -= 1;
+    final item = models.removeAt(currentIdx);
+    models.insert(newIndex, item);
+    // 更新该阶段顺序
+    for (var i = 0; i < models.length; i++) {
+      if (stage == 'split') {
+        models[i] = models[i].copyWith(splitOrder: i);
+      } else {
+        models[i] = models[i].copyWith(solveOrder: i);
+      }
+    }
+    await _persist();
+    notifyListeners();
+  }
+
+  /// 切换某模型在某阶段的启用状态
+  Future<void> toggleStage(String providerId, String modelId, String stage) async {
+    final p = _providers.firstWhere((x) => x.id == providerId,
+        orElse: () => throw StateError('供应商不存在'));
+    final mIdx = p.models.indexWhere((m) => m.id == modelId);
+    if (mIdx < 0) return;
+    if (stage == 'split') {
+      p.models[mIdx] = p.models[mIdx].copyWith(
+          splitEnabled: !p.models[mIdx].splitEnabled);
+    } else {
+      p.models[mIdx] = p.models[mIdx].copyWith(
+          solveEnabled: !p.models[mIdx].solveEnabled);
+    }
+    await _persist();
+    notifyListeners();
+  }
+
+  // ---------- 两阶段调用链生成 ----------
+
+  /// 拆图分割阶段调用链：仅多模态且开启 split 的模型，按 splitOrder 排序
+  List<AiModelConfig> buildSplitChain() {
+    final list = <(AiModel, AiProvider)>[];
+    for (final p in _providers) {
+      for (final m in p.models) {
+        if (m.multimodal && m.splitEnabled && m.hasModelId && p.isComplete) {
+          list.add((m, p));
+        }
+      }
+    }
+    list.sort((a, b) => a.$1.splitOrder.compareTo(b.$1.splitOrder));
+    return list
+        .map((e) => e.$1.toModelConfig(
+            providerName: e.$2.name,
+            baseUrl: e.$2.baseUrl,
+            apiKey: e.$2.apiKey))
+        .toList();
+  }
+
+  /// 读题解答阶段·非多模态链（省经费优先），按 solveOrder 排序
+  List<AiModelConfig> buildSolveChainPlain() {
+    final list = <(AiModel, AiProvider)>[];
+    for (final p in _providers) {
+      for (final m in p.models) {
+        if (!m.multimodal && m.solveEnabled && m.hasModelId && p.isComplete) {
+          list.add((m, p));
+        }
+      }
+    }
+    list.sort((a, b) => a.$1.solveOrder.compareTo(b.$1.solveOrder));
+    return list
+        .map((e) => e.$1.toModelConfig(
+            providerName: e.$2.name,
+            baseUrl: e.$2.baseUrl,
+            apiKey: e.$2.apiKey))
+        .toList();
+  }
+
+  /// 读题解答阶段·多模态链（标记题/回退用），按 solveOrder 排序
+  List<AiModelConfig> buildSolveChainMultimodal() {
+    final list = <(AiModel, AiProvider)>[];
+    for (final p in _providers) {
+      for (final m in p.models) {
+        if (m.multimodal && m.solveEnabled && m.hasModelId && p.isComplete) {
+          list.add((m, p));
+        }
+      }
+    }
+    list.sort((a, b) => a.$1.solveOrder.compareTo(b.$1.solveOrder));
+    return list
+        .map((e) => e.$1.toModelConfig(
+            providerName: e.$2.name,
+            baseUrl: e.$2.baseUrl,
+            apiKey: e.$2.apiKey))
+        .toList();
+  }
+
+  /// 兼容旧调用方：整体读题解答链 = 非多模态在前、多模态在后（成本优先） 
+  List<AiModelConfig> buildModelChain() =>
+      [...buildSolveChainPlain(), ...buildSolveChainMultimodal()];
 
   // ---------- 通用设置 ----------
 
-  /// 设置当前所选通道（公网或内网）的后端 URL（兼容旧单一 URL 字段）
   Future<void> setBackendUrl(String url) async {
     final normalized = _normalize(url);
     if (_usePublic) {
@@ -170,7 +308,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 切换当前使用公网 / 内网后端
   Future<void> setUsePublicBackend(bool usePublic) async {
     _usePublic = usePublic;
     await _api.setUsePublicBackend(usePublic);
@@ -196,7 +333,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 设置主题模式（system / light / dark）
   Future<void> setThemeMode(ThemeMode mode) async {
     _themeMode = mode;
     await _api.setThemeMode(_themeModeName(mode));
@@ -229,31 +365,21 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
-  // ---------- 账号绑定（隐藏预埋，后端适配前不暴露到 UI） ----------
+  // ---------- 账号绑定（隐藏预埋） ----------
 
-  /// 把本机已配置且完整的 AI API Key 打包上传到当前绑定账号。
-  ///
-  /// 后端接口 `PUT /users/api-key`，body `{user_id, api_keys:[{api_key,name,enabled}]}`
-  /// 全量覆盖。若接口未适配 / 网络失败则静默失败，由手动绑定流程向用户提示。
   Future<void> _syncAccountApiKeys() async {
     final u = _username;
     if (u == null || u.isEmpty) return;
     final keys = <Map<String, dynamic>>[];
-    for (final c in _combos) {
-      if (c.isComplete && c.apiKey.trim().isNotEmpty) {
-        keys.add({
-          'api_key': c.apiKey.trim(),
-          'name': c.name,
-          'enabled': c.enabled,
-        });
+    for (final p in _providers) {
+      if (p.isComplete && p.apiKey.trim().isNotEmpty) {
+        keys.add({'api_key': p.apiKey.trim(), 'name': p.name, 'enabled': true});
       }
     }
     if (keys.isEmpty) return;
     await _api.syncUserApiKeys(keys);
   }
 
-  /// 设置用户名：本地持久化，并按 username 尝试绑定后端同一用户。
-  /// @return 绑定是否成功（后端未适配 / 网络失败返回 false，但仍保留本地用户名）
   Future<bool> setUsername(String username) async {
     final u = username.trim();
     _username = u;

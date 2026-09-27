@@ -15,6 +15,7 @@ class QuestionResult {
     this.confidence = 0.0,
     this.subject = '未分类',
     this.questionNo = 0,
+    this.needsMultimodal = false,
   })  : this.id = id,
         sessionNo = sessionNo <= 0 ? (id > 0 ? id : 0) : sessionNo,
         knowledgePoints = knowledgePoints ?? const [];
@@ -41,6 +42,7 @@ class QuestionResult {
       subject: json['subject']?.toString().trim().isNotEmpty == true
           ? json['subject'].toString().trim()
           : '未分类',
+      needsMultimodal: json['needs_multimodal'] == true,
     );
   }
 
@@ -64,6 +66,9 @@ class QuestionResult {
   /// 卷内题号（答案册条目用）：文档拆分/拆题时 AI 返回的题号，
   /// 用于"卷次+题号"认领答案册中的无题干条目。0 表示未知。
   final int questionNo;
+
+  /// 该题是否需要多模态模型直接看图解题（拆图分割阶段标记）。
+  final bool needsMultimodal;
 
   Map<String, dynamic> toJson() => {
         'id': id,
