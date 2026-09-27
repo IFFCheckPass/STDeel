@@ -253,7 +253,6 @@ class SolveProvider extends ChangeNotifier {
   /// 用户取消卷次选择：清空暂存，并以整图流式解题回退
   Future<void> cancelPaperChoice() async {
     final extracted = _pendingExtracted;
-    final splitModels = _pendingSplitModels ?? const [];
     final plainModels = _pendingPlainModels ?? const [];
     final multimodalModels = _pendingMultimodalModels ?? const [];
     final thinkTimeout = _pendingThinkTimeout ?? 20;

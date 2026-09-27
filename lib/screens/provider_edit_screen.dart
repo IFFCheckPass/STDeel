@@ -1,7 +1,9 @@
 /// 供应商编辑页 - 思谛 STDeel
 ///
 /// 管理一个供应商：名称、Base URL、API Key、关联模型列表、连通性测试。
-/// 模型以「用户模型名」（编号 + 供应商名 + 模型名）列表展示，可进入模型编辑页。
+/// 模型在本页的本地列表 `_models` 中维护（添加/编辑/删除均先改本地），
+/// 点击「保存供应商」时把整个供应商（含全部模型）一次性写入 [SettingsProvider]，
+/// 从而避免「未保存的新供应商找不到」以及「同引用清空」两类模型丢失 bug。
 library;
 
 import 'package:flutter/material.dart';
@@ -31,6 +33,10 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _urlCtrl;
   late final TextEditingController _keyCtrl;
+
+  /// 本地维护的模型列表（编辑中）；保存供应商时随 provider 一并落库。
+  late List<AiModel> _models;
+
   bool _obscureKey = true;
   bool _testing = false;
   ({bool ok, int latencyMs, String message})? _testResult;
@@ -41,6 +47,7 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
     _nameCtrl = TextEditingController(text: widget.initial.name);
     _urlCtrl = TextEditingController(text: widget.initial.baseUrl);
     _keyCtrl = TextEditingController(text: widget.initial.apiKey);
+    _models = List.of(widget.initial.models);
   }
 
   @override
@@ -51,19 +58,20 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
     super.dispose();
   }
 
+  String get _providerName =>
+      _nameCtrl.text.trim().isEmpty ? '未命名供应商' : _nameCtrl.text.trim();
+
   AiProvider _buildProvider() => AiProvider(
         id: widget.initial.id,
-        name: _nameCtrl.text.trim().isEmpty
-            ? '未命名供应商'
-            : _nameCtrl.text.trim(),
+        name: _providerName,
         baseUrl: normalizeBaseUrl(_urlCtrl.text),
         apiKey: _keyCtrl.text.trim(),
-        models: List.from(widget.initial.models),
+        models: List.of(_models),
       );
 
   @override
   Widget build(BuildContext context) {
-    final provider = widget.initial;
+    final s = context.read<SettingsProvider>();
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.isNew ? '添加供应商' : '编辑供应商'),
@@ -137,48 +145,14 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                   ),
                   if (_testResult != null) ...[
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: (_testResult!.ok ? G.mint : G.coral)
-                            .withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: (_testResult!.ok ? G.mint : G.coral)
-                              .withOpacity(0.4),
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            _testResult!.ok
-                                ? Icons.check_circle
-                                : Icons.cancel,
-                            color: _testResult!.ok ? G.mint : G.coral,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _testResult!.message,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: _testResult!.ok ? G.mint : G.coral,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _testResultCard(),
                   ],
                 ],
               ),
             ),
             const SizedBox(height: 24),
-            GlassSectionTitle('模型（${provider.models.length} 个）'),
-            if (provider.models.isEmpty)
+            GlassSectionTitle('模型（${_models.length} 个）'),
+            if (_models.isEmpty)
               GlassCard(
                 child: Column(
                   children: [
@@ -197,8 +171,8 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                 ),
               )
             else
-              ...List.generate(provider.models.length, (i) {
-                final m = provider.models[i];
+              ...List.generate(_models.length, (i) {
+                final m = _models[i];
                 return GlassCard(
                   child: ListTile(
                     leading: Container(
@@ -209,20 +183,19 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
                         color: m.multimodal ? G.mint : G.accentDeep,
                       ),
                       alignment: Alignment.center,
-                      child: Text('${modelNo(provider, m)}',
+                      child: Text('${i + 1}',
                           style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
                               fontSize: 12)),
                     ),
-                    title: Text(userModelName(
-                        context.read<SettingsProvider>().providers,
-                        provider,
-                        m),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600)),
+                    title: Text(
+                      userModelName(s.providers, _buildProvider(), m),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
                     subtitle: Text(
                       m.multimodal ? '多模态' : '非多模态',
                       style: TextStyle(fontSize: 11, color: G.textSecondary),
@@ -251,63 +224,97 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
     );
   }
 
+  Widget _testResultCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: (_testResult!.ok ? G.mint : G.coral).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: (_testResult!.ok ? G.mint : G.coral).withOpacity(0.4),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(_testResult!.ok ? Icons.check_circle : Icons.cancel,
+              color: _testResult!.ok ? G.mint : G.coral, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _testResult!.message,
+              style: TextStyle(
+                fontSize: 13,
+                color: _testResult!.ok ? G.mint : G.coral,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _addModel() async {
-    final s = context.read<SettingsProvider>();
-    final current = widget.initial;
-    if (current.baseUrl.trim().isEmpty) {
+    if (_urlCtrl.text.trim().isEmpty) {
       showGlassSnackBar(context, '请先填写 Base URL', error: true);
       return;
     }
     final ts = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-    await Navigator.of(context).push(
+    final out = await Navigator.of(context).push<ModelEditOutcome>(
       MaterialPageRoute(
         builder: (_) => ModelEditScreen(
-          providerId: current.id,
-          providerName: _nameCtrl.text.trim().isEmpty
-              ? current.name
-              : _nameCtrl.text.trim(),
+          providerName: _providerName,
+          baseUrl: normalizeBaseUrl(_urlCtrl.text),
+          apiKey: _keyCtrl.text.trim(),
           initial: AiModel(
             id: 'm-$ts',
             name: '新模型',
             modelId: '',
             multimodal: false,
             solveEnabled: true,
-            solveOrder: current.models.length,
+            solveOrder: _models.length,
           ),
           isNew: true,
         ),
       ),
     );
-    if (mounted) setState(() {});
-    // 刷新 provider 中的 models（从 settings 取最新）
-    final updated = s.providers.firstWhere((p) => p.id == current.id,
-        orElse: () => current);
-    widget.initial.models
-      ..clear()
-      ..addAll(updated.models);
+    if (!mounted || out == null) return;
+    if (out.deleted) return; // 新建即删除，忽略
+    final m = out.model;
+    if (m != null) {
+      setState(() => _models.add(m));
+    }
   }
 
   Future<void> _editModel(AiModel model) async {
-    final current = widget.initial;
-    await Navigator.of(context).push(
+    final out = await Navigator.of(context).push<ModelEditOutcome>(
       MaterialPageRoute(
         builder: (_) => ModelEditScreen(
-          providerId: current.id,
-          providerName: _nameCtrl.text.trim().isEmpty
-              ? current.name
-              : _nameCtrl.text.trim(),
+          providerName: _providerName,
+          baseUrl: normalizeBaseUrl(_urlCtrl.text),
+          apiKey: _keyCtrl.text.trim(),
           initial: model,
           isNew: false,
         ),
       ),
     );
-    if (mounted) setState(() {});
-    final s = context.read<SettingsProvider>();
-    final updated = s.providers.firstWhere((p) => p.id == current.id,
-        orElse: () => current);
-    widget.initial.models
-      ..clear()
-      ..addAll(updated.models);
+    if (!mounted || out == null) return;
+    if (out.deleted) {
+      setState(() => _models.removeWhere((m) => m.id == model.id));
+      return;
+    }
+    final m = out.model;
+    if (m != null) {
+      setState(() {
+        final i = _models.indexWhere((x) => x.id == model.id);
+        if (i >= 0) {
+          _models[i] = m;
+        } else {
+          _models.add(m);
+        }
+      });
+    }
   }
 
   Future<void> _testConnection() async {
