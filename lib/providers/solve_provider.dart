@@ -93,7 +93,9 @@ class SolveProvider extends ChangeNotifier {
   /// 多候选卷次暂停期间暂存的拆题结果与上下文（UI 弹窗选择后 resume）
   List<QuestionResult>? _pendingExtracted;
   List<AnswerPaperEntity>? _pendingPapers;
-  List<AiModelConfig>? _pendingModels;
+  List<AiModelConfig>? _pendingSplitModels;
+  List<AiModelConfig>? _pendingPlainModels;
+  List<AiModelConfig>? _pendingMultimodalModels;
   int? _pendingThinkTimeout;
   Stopwatch? _pendingSw;
   String? _pendingDurablePath;
@@ -107,21 +109,26 @@ class SolveProvider extends ChangeNotifier {
   SolveUiState _state = const SolveUiState();
   SolveUiState get state => _state;
 
-  /// 拍照/选图后触发整轮解题：
-  /// ① 轻量拆题（AI 只识别题号+题干，不解答）
-  /// ② 答案库匹配（题干 hash → 卷次+题号认领）
-  /// ③ 全部命中 → 直接返回答案（不调用解题 AI，省 token）
-  ///    有未命中 → 回退整图流式解题（现状路径）
-  ///    卷次有多个候选 → 暂停等待 UI 弹窗选择（resumeWithPaper）
+  /// 拍照/选图后触发整轮解题（v0.9.0 两阶段管线）：
+  /// Stage A 拆图分割（多模态提取题目，无法转文字的标记 needsMultimodal）
+  /// → 答案库匹配（命中直出）
+  /// → Stage B 读题解答（未标记题优先非多模态省经费；标记题/失败回退多模态；
+  ///   命中答案库直接出答案；多模态与非多模态来自不同供应商时并行）。
+  ///
+  /// [splitModels]：拆图分割阶段的多模态链；[plainModels]/[multimodalModels]：
+  /// 读题解答阶段的非多模态/多模态链。
   Future<void> solve({
     required String imagePath,
-    required List<AiModelConfig> models,
+    required List<AiModelConfig> splitModels,
+    required List<AiModelConfig> plainModels,
+    required List<AiModelConfig> multimodalModels,
     int thinkTimeout = 20,
   }) async {
-    if (models.isEmpty) {
+    final solveChain = [...plainModels, ...multimodalModels];
+    if (splitModels.isEmpty && solveChain.isEmpty) {
       _state = const SolveUiState(
         status: SolveStatus.error,
-        error: '未配置可用的 AI 模型，请到「设置 → AI 模型组合」填写 API Key',
+        error: '未配置可用的 AI 模型，请到「设置 → AI 模型组合」配置供应商与模型',
       );
       notifyListeners();
       return;
@@ -145,24 +152,34 @@ class SolveProvider extends ChangeNotifier {
 
     _state = const SolveUiState(
       status: SolveStatus.thinking,
-      currentModel: '识别题目中',
+      currentModel: '拆图识别中',
     );
     notifyListeners();
 
-    // ① 轻量拆题（只输出题号+题干）；失败/无题则直接回退整图解题
-    final extracted = await _tryExtractQuestions(models, base64Image);
+    // Stage A：拆图分割（仅多模态链；无多模态则直接整图解题）
+    List<QuestionResult> extracted;
+    if (splitModels.isEmpty) {
+      extracted = const [];
+    } else {
+      extracted = await _trySplitImage(splitModels, base64Image);
+    }
+
+    // 拆图失败/无题：回退整图解题（原单阶段路径，streaming 保留）
     if (extracted.isEmpty) {
-      await _fallbackSolve(models, base64Image, thinkTimeout, sw, durablePath);
+      await _fallbackSolve(
+          solveChain, base64Image, thinkTimeout, sw, durablePath, const []);
       return;
     }
 
-    // ② 答案库匹配（含卷次+题号认领）
+    // Stage B 第一步：答案库匹配（含卷次+题号认领）
     final match = await _matchFromLibrary(extracted);
     if (match.paperChoice != null && match.paperChoice!.isNotEmpty) {
       // 多个卷次候选：暂停，等待 UI 弹窗选择后再继续
       _pendingExtracted = extracted;
       _pendingPapers = match.paperChoice;
-      _pendingModels = models;
+      _pendingSplitModels = splitModels;
+      _pendingPlainModels = plainModels;
+      _pendingMultimodalModels = multimodalModels;
       _pendingThinkTimeout = thinkTimeout;
       _pendingSw = sw;
       _pendingDurablePath = durablePath;
@@ -178,7 +195,9 @@ class SolveProvider extends ChangeNotifier {
     await _finishMatch(
       extracted,
       match.hits,
-      models,
+      splitModels,
+      plainModels,
+      multimodalModels,
       thinkTimeout,
       sw,
       durablePath,
@@ -189,15 +208,19 @@ class SolveProvider extends ChangeNotifier {
   Future<void> resumeWithPaper(int paperId) async {
     final extracted = _pendingExtracted;
     _clearPendingChoice();
-    final models = _pendingModels ?? const [];
-    _pendingModels = null;
+    final splitModels = _pendingSplitModels ?? const [];
+    final plainModels = _pendingPlainModels ?? const [];
+    final multimodalModels = _pendingMultimodalModels ?? const [];
     final thinkTimeout = _pendingThinkTimeout ?? 20;
     final sw = _pendingSw ?? Stopwatch();
     final durablePath = _pendingDurablePath;
+    _pendingSplitModels = null;
+    _pendingPlainModels = null;
+    _pendingMultimodalModels = null;
     _pendingThinkTimeout = null;
     _pendingSw = null;
     _pendingDurablePath = null;
-    if (extracted == null || extracted.isEmpty || models.isEmpty) return;
+    if (extracted == null || extracted.isEmpty) return;
 
     _state = _state.copyWith(
       status: SolveStatus.thinking,
@@ -218,7 +241,9 @@ class SolveProvider extends ChangeNotifier {
     await _finishMatch(
       extracted,
       hits,
-      models,
+      splitModels,
+      plainModels,
+      multimodalModels,
       thinkTimeout,
       sw,
       durablePath,
@@ -228,25 +253,30 @@ class SolveProvider extends ChangeNotifier {
   /// 用户取消卷次选择：清空暂存，并以整图流式解题回退
   Future<void> cancelPaperChoice() async {
     final extracted = _pendingExtracted;
-    final models = _pendingModels ?? const [];
+    final splitModels = _pendingSplitModels ?? const [];
+    final plainModels = _pendingPlainModels ?? const [];
+    final multimodalModels = _pendingMultimodalModels ?? const [];
     final thinkTimeout = _pendingThinkTimeout ?? 20;
     final sw = _pendingSw ?? Stopwatch();
     final durablePath = _pendingDurablePath;
     _clearPendingChoice();
-    _pendingModels = null;
+    _pendingSplitModels = null;
+    _pendingPlainModels = null;
+    _pendingMultimodalModels = null;
     _pendingThinkTimeout = null;
     _pendingSw = null;
     _pendingDurablePath = null;
     _state = _state.copyWith(notice: null);
     notifyListeners();
-    if (extracted == null || durablePath == null || models.isEmpty) return;
+    if (extracted == null || durablePath == null) return;
     final bytes = await File(durablePath).readAsBytes();
     await _fallbackSolve(
-      models,
+      [...plainModels, ...multimodalModels],
       base64Encode(bytes),
       thinkTimeout,
       sw,
       durablePath,
+      const [],
     );
   }
 
@@ -255,16 +285,18 @@ class SolveProvider extends ChangeNotifier {
     _pendingPapers = null;
   }
 
-  /// 收尾：全部命中直接出结果；否则回退整图流式解题
+  /// 收尾：全部命中直接出结果；否则按「未标记/已标记」分组读题解答
   Future<void> _finishMatch(
     List<QuestionResult> extracted,
     List<QuestionResult> hits,
-    List<AiModelConfig> models,
+    List<AiModelConfig> splitModels,
+    List<AiModelConfig> plainModels,
+    List<AiModelConfig> multimodalModels,
     int thinkTimeout,
     Stopwatch sw,
     String? durablePath,
   ) async {
-    if (hits.length == extracted.length && hits.isNotEmpty) {
+    if (hits.length == extracted.length && extracted.isNotEmpty) {
       // 全部命中：直接出结果，不调用解题 AI
       for (var i = 0; i < hits.length; i++) {
         hits[i].sessionNo = i + 1;
@@ -283,7 +315,7 @@ class SolveProvider extends ChangeNotifier {
         currentModel: '答案库',
       );
       _persistMatchedResult(result);
-      _notifier.notifySuccess(
+    _notifier.notifySuccess(
         questionCount: result.questions.length,
         elapsed: Duration(milliseconds: result.latencyMs),
       );
@@ -291,7 +323,7 @@ class SolveProvider extends ChangeNotifier {
       return;
     }
 
-    // 有未命中（或拆题结果与答案库不对应）：回退整图流式解题（现状路径）
+    // 有未命中：取未命中题目，进入读题解答阶段
     if (durablePath == null) {
       _state = _state.copyWith(
         status: SolveStatus.error,
@@ -301,22 +333,178 @@ class SolveProvider extends ChangeNotifier {
       return;
     }
     final bytes = await File(durablePath).readAsBytes();
-    await _fallbackSolve(
-      models,
-      base64Encode(bytes),
-      thinkTimeout,
-      sw,
-      durablePath,
+    await _solveStageB(
+      extracted: extracted,
+      hits: hits,
+      plainModels: plainModels,
+      multimodalModels: multimodalModels,
+      thinkTimeout: thinkTimeout,
+      sw: sw,
+      durablePath: durablePath,
+      base64Image: base64Encode(bytes),
     );
   }
 
-  /// 回退路径：整图流式解题（原有逻辑）
+  /// 读题解答阶段（Stage B）：
+  /// - 命中答案库的题直接出答案；
+  /// - 未命中中「已标记需多模态」的题 → 多模态链（带原图）；
+  /// - 未命中中「未标记」且非多模态链可用的题 → 非多模态链（省经费）；
+  /// - 当「已标记多模态组」与「未标记普通组」来自不同供应商（Base URL+API Key 不同）
+  ///   且两者都需解题时，并行发送两组请求再合并。
+  Future<void> _solveStageB({
+    required List<QuestionResult> extracted,
+    required List<QuestionResult> hits,
+    required List<AiModelConfig> plainModels,
+    required List<AiModelConfig> multimodalModels,
+    required int thinkTimeout,
+    required Stopwatch sw,
+    String? durablePath,
+    required String base64Image,
+  }) async {
+    // 未命中题干集合（hits 的 content 视为已解决）
+    final hitContents = hits.map((h) => h.content.trim()).where((c) => c.isNotEmpty).toSet();
+    final remaining = extracted
+        .where((q) => !hitContents.contains(q.content.trim()))
+        .toList();
+    if (remaining.isEmpty) {
+      // 全部命中已在前面处理；这里理论上不会进入
+      return;
+    }
+
+    final marked = remaining.where((q) => q.needsMultimodal).toList();
+    final normal = remaining.where((q) => !q.needsMultimodal).toList();
+
+    final plainNonEmpty = plainModels.isNotEmpty;
+    final multiNonEmpty = multimodalModels.isNotEmpty;
+    final differentProvider = plainModels.isNotEmpty &&
+        multimodalModels.isNotEmpty &&
+        !_sameProvider(plainModels.first, multimodalModels.first);
+    final canParallel = marked.isNotEmpty &&
+        normal.isNotEmpty &&
+        differentProvider &&
+        plainNonEmpty &&
+        multiNonEmpty;
+
+    _state = _state.copyWith(
+      status: SolveStatus.thinking,
+      currentModel: canParallel ? '并行解答中' : '读题解答中',
+      reasoningText: '',
+      answerText: '',
+      notice: null,
+    );
+    notifyListeners();
+
+    if (canParallel) {
+      // 并行：已标记→多模态（带原图），未标记→非多模态（纯文本）
+      final f1 = _streamSolveGroup(
+        group: marked,
+        chain: multimodalModels,
+        base64Image: base64Image,
+        thinkTimeout: thinkTimeout,
+      );
+      final f2 = _streamSolveGroup(
+        group: normal,
+        chain: plainModels,
+        base64Image: null,
+        thinkTimeout: thinkTimeout,
+      );
+      final r1 = await f1;
+      final r2 = await f2;
+      final merged = <QuestionResult>[
+        ...?r1,
+        ...?r2,
+      ];
+      if (merged.isEmpty) {
+        _state = _state.copyWith(
+          status: SolveStatus.error,
+          error: '所有 AI 模型均未返回有效结果',
+        );
+        notifyListeners();
+        return;
+      }
+      _emitDone(merged, sw, durablePath);
+      return;
+    }
+
+    // 单一路径（最常用）：优先非多模态（成本优先），失败自动切多模态。
+    // 带原图，使标记题（图形/绘图）可由多模态模型正确识别。
+    final chain = [...plainModels, ...multimodalModels];
+    await _fallbackSolve(chain, base64Image, thinkTimeout, sw, durablePath, remaining);
+  }
+
+  /// 判断两组模型是否属同一供应商（Base URL + API Key 均相同则视为同一家）。
+  bool _sameProvider(AiModelConfig a, AiModelConfig b) =>
+      a.endpoint == b.endpoint && a.apiKey == b.apiKey;
+
+  /// 非流式收集单组解答结果（用于跨供应商并行分支）。
+  /// 返回 null 表示该组无有效结果。
+  Future<List<QuestionResult>?> _streamSolveGroup({
+    required List<QuestionResult> group,
+    required List<AiModelConfig> chain,
+    String? base64Image,
+    required int thinkTimeout,
+  }) async {
+    if (chain.isEmpty || group.isEmpty) return null;
+    // 纯文本模式：把本组题目拼进 userPrompt；带图模式由模型自己读图。
+    final userPrompt = base64Image == null
+        ? '请解答以下题目，仅返回这些题的 JSON：\n'
+            '${group.map((q) => '题号 ${q.questionNo > 0 ? q.questionNo : ''}：${q.content}').join('\n')}'
+        : '';
+    final collected = <QuestionResult>[];
+    final sub = _failover
+        .solve(
+          models: chain,
+          base64Image: base64Image,
+          userPrompt: userPrompt,
+          thinkTimeoutSeconds: thinkTimeout,
+        )
+        .listen((event) {
+          if (event is AiDone) collected.addAll(event.result.questions);
+        });
+    try {
+      await sub.asFuture();
+    } catch (_) {}
+    await sub.cancel();
+    return collected.isEmpty ? null : collected;
+  }
+
+  /// 并行分支合并结果后统一收尾（完成态 + 落库 + 通知）。
+  void _emitDone(List<QuestionResult> questions, Stopwatch sw, String? imagePath) {
+    sw.stop();
+    for (var i = 0; i < questions.length; i++) {
+      if (questions[i].sessionNo <= 0) questions[i].sessionNo = i + 1;
+    }
+    final result = SolveResult(
+      questions: questions,
+      aiModel: 'AI',
+      latencyMs: sw.elapsedMilliseconds,
+      tokensUsed: questions.fold(0, (s, q) => s + q.content.length ~/ 4),
+      source: 'ai',
+      imagePath: imagePath ?? '',
+    );
+    _state = SolveUiState(
+      status: SolveStatus.done,
+      result: result,
+      currentModel: 'AI',
+    );
+    _persistResult(result).then((ids) {
+      _sync.uploadSolveResult(result, recordIds: ids);
+    });
+    _notifier.notifySuccess(
+      questionCount: result.questions.length,
+      elapsed: Duration(milliseconds: result.latencyMs),
+    );
+    notifyListeners();
+  }
+
+  /// 回退路径：整图流式解题（保留 streaming UX）
   Future<void> _fallbackSolve(
     List<AiModelConfig> models,
     String base64Image,
     int thinkTimeout,
     Stopwatch sw,
     String? durablePath,
+    List<QuestionResult>? scope,
   ) async {
     final sub = _failover
         .solve(
@@ -329,24 +517,31 @@ class SolveProvider extends ChangeNotifier {
     await sub.cancel();
   }
 
-  /// 轻量拆题：AI 只识别题号+题干；失败或未解析出题目返回空列表，
-  /// 由调用方回退整图解题（拆题不阻塞主流程）。
-  Future<List<QuestionResult>> _tryExtractQuestions(
-    List<AiModelConfig> models,
+  /// Stage A 拆图分割：按拆图分割链（多模态）逐个尝试，AI 提取题目并标记
+  /// 无法转文字的题（needsMultimodal）。全部失败或未解析出题目返回空列表，
+  /// 由调用方回退整图解题。
+  Future<List<QuestionResult>> _trySplitImage(
+    List<AiModelConfig> splitModels,
     String base64Image,
   ) async {
-    try {
-      final raw = await _ai.generateRaw(
-        model: models.first,
-        userText: '请识别图片中的题目，只输出题号与题干。',
-        imageDataUrls: ['data:image/jpeg;base64,$base64Image'],
-        timeoutSeconds: 60,
-        source: 'AI 调用 · 拆题识别',
-      );
-      return _parseExtracted(raw);
-    } catch (_) {
-      return const [];
+    final dataUrl = 'data:image/jpeg;base64,$base64Image';
+    for (final m in splitModels) {
+      try {
+        final raw = await _ai.generateRaw(
+          model: m,
+          userText: '请按提示词拆图分割。',
+          imageDataUrls: [dataUrl],
+          timeoutSeconds: 90,
+          source: 'AI 调用 · 拆图分割',
+          systemPrompt: AiConfig.imageSplitPrompt,
+        );
+        final qs = _parseExtracted(raw);
+        if (qs.isNotEmpty) return qs;
+      } catch (_) {
+        // 该模型失败：尝试下一个拆图分割模型
+      }
     }
+    return const [];
   }
 
   /// 解析拆题 JSON（容忍 markdown 围栏 / 前导说明文字）

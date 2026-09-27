@@ -3,24 +3,49 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:stdeel/models/ai_combo.dart';
+import 'package:stdeel/models/ai_provider.dart';
 
 void main() {
-  test('AiCombo JSON 序列化往返', () {
-    final combo = AiCombo(
-      id: 'test-1',
-      name: 'Test',
-      baseUrl: 'https://api.example.com/v1/',
+  test('AiProvider/AiModel JSON 序列化往返', () {
+    final provider = AiProvider(
+      id: 'p-1',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1/',
       apiKey: 'sk-test',
-      modelId: 'test-model',
-      enabled: true,
+      models: [
+        AiModel(
+          id: 'm-1',
+          name: 'V3',
+          modelId: 'deepseek-chat',
+          multimodal: false,
+          solveEnabled: true,
+        ),
+      ],
     );
-    final json = combo.toJson();
-    final restored = AiCombo.fromJson(json);
-    expect(restored.name, combo.name);
-    expect(restored.apiKey, combo.apiKey);
-    expect(restored.modelId, combo.modelId);
-    expect(restored.enabled, combo.enabled);
+    final restored = AiProvider.fromJson(provider.toJson());
+    expect(restored.name, provider.name);
+    expect(restored.baseUrl, provider.baseUrl);
+    expect(restored.apiKey, provider.apiKey);
+    expect(restored.models.length, 1);
+    expect(restored.models.first.modelId, 'deepseek-chat');
+    expect(restored.models.first.solveEnabled, true);
+  });
+
+  test('用户模型名 = 编号 + 供应商名 + 模型名', () {
+    final providers = [
+      AiProvider(
+        id: 'p-1',
+        name: 'DeepSeek',
+        baseUrl: '',
+        apiKey: '',
+        models: [AiModel(id: 'm-1', name: 'V3', modelId: 'deepseek-chat')],
+      ),
+    ];
+    final p = providers.first;
+    final m = p.models.first;
+    expect(userModelName(providers, p, m), '1-1 DeepSeek V3');
+    expect(providerNo(providers, p), 1);
+    expect(modelNo(p, m), 1);
   });
 
   test('normalizeBaseUrl 补全协议并去尾部斜杠', () {

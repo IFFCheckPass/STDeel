@@ -158,4 +158,37 @@ class SolveRecordDao extends DatabaseAccessor<AppDatabase>
             ..where((t) => t.remoteId.isNotNull())
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
+
+  /// 备份导入的去重：同一题干 + 同一创建时间（±1 秒内）视为已存在，避免重复导入。
+  Future<bool> existsBySourceKey(String questionText, int createdAtEpochMs) async {
+    final target = DateTime.fromMillisecondsSinceEpoch(createdAtEpochMs);
+    final recs = await (select(solveRecords)
+          ..where((t) => t.questionText.equals(questionText))
+          ..limit(50))
+        .get();
+    return recs
+        .any((r) => r.createdAt.difference(target).inSeconds.abs() < 1);
+  }
+
+  /// 从备份还原一条解题记录（保留全部字段；synced 按备份原值）。
+  Future<int> insertFromBackup(SolveRecordEntity e) =>
+      into(solveRecords).insert(
+        SolveRecordsCompanion.insert(
+          questionText: e.questionText,
+          answer: Value(e.answer),
+          solution: Value(e.solution),
+          knowledgePoints: Value(e.knowledgePoints),
+          subject: Value(e.subject),
+          aiModel: Value(e.aiModel),
+          latencyMs: Value(e.latencyMs),
+          tokensUsed: Value(e.tokensUsed),
+          matched: Value(e.matched),
+          userFeedback: Value(e.userFeedback),
+          actionType: Value(e.actionType),
+          synced: Value(e.synced),
+          remoteId: Value(e.remoteId),
+          imagePath: Value(e.imagePath),
+          createdAt: Value(e.createdAt),
+        ),
+      );
 }

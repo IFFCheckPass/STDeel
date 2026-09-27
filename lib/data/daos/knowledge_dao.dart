@@ -95,4 +95,34 @@ class KnowledgeDao extends DatabaseAccessor<AppDatabase>
       return (r.wrongCount / total) > 0.5;
     }).toList());
   }
+
+  /// 备份导入：以绝对计数写入（无则新建，有则覆盖正确/错误计数并更新学科归属）。
+  Future<void> importAbsolute({
+    required String knowledgePoint,
+    required String subject,
+    required int correctCount,
+    required int wrongCount,
+  }) async {
+    final existing = await (select(knowledgeMastery)
+          ..where((t) => t.knowledgePoint.equals(knowledgePoint))
+          ..limit(1))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(knowledgeMastery).insert(KnowledgeMasteryCompanion.insert(
+        knowledgePoint: knowledgePoint,
+        subject: Value(subject),
+        correctCount: Value(correctCount),
+        wrongCount: Value(wrongCount),
+      ));
+    } else {
+      await (update(knowledgeMastery)
+            ..where((t) => t.id.equals(existing.id)))
+          .write(KnowledgeMasteryCompanion(
+        subject: Value(subject),
+        correctCount: Value(correctCount),
+        wrongCount: Value(wrongCount),
+        updatedAt: Value(DateTime.now()),
+      ));
+    }
+  }
 }
