@@ -148,7 +148,6 @@ class _StageSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = context.read<SettingsProvider>();
     return GlassCard(
       padding: const EdgeInsets.all(12),
       child: Column(

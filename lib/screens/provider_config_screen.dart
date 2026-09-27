@@ -128,7 +128,6 @@ class _ProviderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = context.read<SettingsProvider>();
     final modelCount = provider.models.length;
     return GlassCard(
       child: InkWell(

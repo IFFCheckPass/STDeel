@@ -426,3 +426,27 @@ rm -f android/upload-keystore.jks android/key.properties
 - **发布（双端）**：`gh release create v0.9.0 --prerelease`（0.9.0 < 1.0.0 → Pre-Release）并上传 `app-0.9.0.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.0.exe` 并自动上传同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.0
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
+
+### v0.9.1（✅ 已成功编译并发布，小版本修复：0.9.0 → c 位 +1，模型无法添加/保存后消失）
+- **版本**：`pubspec.yaml version: 0.9.1+28`；`settings_screen.dart` 角标/更新卡片 `v0.9.1`。
+- **bug（模型模块严重缺陷）与修复**：
+  - **根因1·同引用清空**：`provider_edit_screen.dart` 的 `_addModel/_editModel` 末尾执行
+    `widget.initial.models..clear()..addAll(updated.models)`；而编辑已有供应商时 `widget.initial`
+    就是 `SettingsProvider._providers` 中**同一个对象引用**，`updated.models` 与该列表是**同一个 List**，
+    clear 后 addAll(空) → 模型列表被清空 → 「添加的模型保存后就消失」。
+  - **根因2·新建供应商找不到 provider**：`ModelEditScreen._save` 调 `saveModel(providerId,model)`，
+    而新建供应商尚不在 `_providers` 中，`firstWhere(orElse: throws)` 抛 `StateError('供应商不存在')`
+    → 「根本添加不了模型」。
+  - **修复**：模型编辑改为**页间返回值协调**——`ModelEditScreen` 不再直接写 SettingsProvider，
+    通过 `Navigator.pop(ModelEditOutcome{model,deleted})` 返回；`provider_edit_screen.dart` 用**本地列表**
+    `_models` 维护（添加/编辑/删除先改本地），点「保存供应商」时把整个 provider（含全部模型）一次性
+    `saveProvider`。同时给 `ModelEditScreen` 传入 `baseUrl/apiKey` 供「获取模型列表」使用（不依赖
+    SettingsProvider）。从而同时消除「同引用清空」与「新供应商找不到」两类 bug。
+- **构建**：增量 Gradle 阶段约 **157.6s**。产物 **app-release.apk 74.5MB**，改名 `app-0.9.1.apk`。
+- **签名**：`apksigner verify --verbose` → **v1=false、v2=true、v3=false**；`--print-certs` → `CN=STDeel`，
+  SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`（与基准一致）。
+- **发布（双端）**：`gh release create v0.9.1 --prerelease`（0.9.1 < 1.0.0 → Pre-Release）并上传
+  `app-0.9.1.apk`；`feature/windows-support` merge main 后 push 触发 build-windows Actions 构建
+  `stdeel-setup-0.9.1.exe` 并自动上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.1
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。

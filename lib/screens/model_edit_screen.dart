@@ -1,29 +1,36 @@
 /// 模型编辑页 - 思谛 STDeel
 ///
 /// 编辑一个模型：API model id、自定义名称、是否多模态，以及其在
-/// 「拆图分割 / 读题解答」两阶段的启用开关。并提供从供应商端点拉取模型列表、
-/// 连通性测试。
+/// 「拆图分割 / 读题解答」两阶段的启用开关。可从供应商端点拉取模型列表。
+///
+/// 本页 **不直接写入** SettingsProvider（避免未保存的新供应商找不到而抛异常），
+/// 而是通过 `Navigator.pop` 把编辑结果 `({AiModel? model, bool deleted})` 返回给
+/// 供应商编辑页，由供应商页在「保存供应商」时一并落库。
 library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/ai_provider.dart';
-import '../providers/settings_provider.dart';
+import '../models/ai_provider.dart' show AiModel;
 import '../services/ai_service.dart';
 import '../widgets/glass.dart';
+
+/// 模型编辑结果
+typedef ModelEditOutcome = ({AiModel? model, bool deleted});
 
 class ModelEditScreen extends StatefulWidget {
   const ModelEditScreen({
     super.key,
-    required this.providerId,
     required this.providerName,
+    required this.baseUrl,
+    required this.apiKey,
     required this.initial,
     required this.isNew,
   });
 
-  final String providerId;
   final String providerName;
+  final String baseUrl;
+  final String apiKey;
   final AiModel initial;
   final bool isNew;
 
@@ -188,17 +195,15 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
   }
 
   Future<void> _fetchModels() async {
-    final s = context.read<SettingsProvider>();
-    final p = s.providers.firstWhere((p) => p.id == widget.providerId,
-        orElse: () => throw StateError('供应商不存在'));
-    if (p.baseUrl.trim().isEmpty) {
+    if (widget.baseUrl.trim().isEmpty) {
       showGlassSnackBar(context, '请先为供应商填写 Base URL', error: true);
       return;
     }
     setState(() => _fetchingModels = true);
     try {
       final ai = context.read<AiService>();
-      final models = await ai.fetchModels(baseUrl: p.baseUrl, apiKey: p.apiKey);
+      final models =
+          await ai.fetchModels(baseUrl: widget.baseUrl, apiKey: widget.apiKey);
       if (!mounted) return;
       if (models.isEmpty) {
         showGlassSnackBar(context, '该端点未返回任何模型', error: true);
@@ -287,17 +292,15 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
     );
   }
 
-  Future<void> _save() async {
+  void _save() {
     final model = _buildModel();
     if (model.modelId.isEmpty) {
       showGlassSnackBar(context, 'Model ID 不能为空', error: true);
       return;
     }
-    final s = context.read<SettingsProvider>();
-    await s.saveModel(widget.providerId, model);
-    if (!mounted) return;
-    showGlassSnackBar(context, '模型「${model.name}」已保存', success: true);
-    Navigator.of(context).pop();
+    Navigator.of(context).pop<ModelEditOutcome>(
+      (model: model, deleted: false),
+    );
   }
 
   Future<void> _delete() async {
@@ -323,10 +326,8 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
       ),
     );
     if (confirmed != true) return;
-    final s = context.read<SettingsProvider>();
-    await s.deleteModel(widget.providerId, widget.initial.id);
-    if (!mounted) return;
-    showGlassSnackBar(context, '模型已删除', success: true);
-    Navigator.of(context).pop();
+    Navigator.of(context).pop<ModelEditOutcome>(
+      (model: null, deleted: true),
+    );
   }
 }
