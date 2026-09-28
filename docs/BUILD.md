@@ -450,3 +450,40 @@ rm -f android/upload-keystore.jks android/key.properties
   `stdeel-setup-0.9.1.exe` 并自动上传同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.1
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
+
+### v0.9.2（✅ 已成功编译并发布 —— 应 0.9.1 "没有证书" 反馈重出）
+- **背景**：用户反馈 0.9.1 在荣耀30/HarmonyOS 安装仍报"没有证书"，与历史 v1+v2+v3 场景相似。
+- **诊断（先于重建）**：
+  - 对已发布 `app-0.9.1.apk` 做字节级签名块解析：`v1`（META-INF 签名文件）= 无、`v3`（0xf05368c0 块）= 无、
+    签名块 id = `[0x7109871a(v2), 0x5ff0a200]`；并以 DER-X.509 提取 v2 证书 SHA-256 =
+    `ED73:79:E8:34:86:70:43:22:DB:A4:33:61:DD:E1:6C:30:7F:E6:4F:8F:DA:BD:C7:E4:37:F7:0E:B4:57:F9:33`。
+  - 与可用基准 `app-0.7.4.apk`、`app-0.7.9.apk` 三者**签名方案与证书完全一致** → 判定非签名配置回归，
+    多为设备端覆盖安装残留缓存所致；按 AGENTS.md「版本号强制递增」重出 0.9.2（c 位 +1）。
+- **工具链（本沙箱重建，因环境已重置）**：
+  - Flutter **3.47.1**（stable revision `6655482ec0`）/ Dart **3.13.1**。
+  - JDK 17（`mise` 安装于 `/root/.local/share/mise/installs/java/17.0.2`；`gradle.properties` 固定）。
+  - Gradle **9.3.1**（wrapper 走腾讯镜像 `mirrors.cloud.tencent.com/gradle`，`android/settings.gradle.kts` 已用阿里云 Maven）。
+  - Android SDK（全部从腾讯镜像 `mirrors.cloud.tencent.com/AndroidSDK` 直下 zip 解压）：
+    - `platform-tools_r37.0.1-linux.zip` → `platform-tools/`
+    - `platform-36_r02.zip` → `platforms/android-36/`
+    - `build-tools_r36_linux.zip`（解压顶层目录名是 `android-16`，内容即 build-tools）→ `build-tools/36.0.0/`
+    - `android-ndk-r28c-linux.zip` → `ndk/28.2.13676358/`
+    - `commandlinetools-linux-*.zip` → `cmdline-tools/latest/`
+    - `platforms;android-34` 用 `sdkmanager --install` 补齐（`flutter_local_notifications`、
+      `package_info_plus`、`wakelock_plus` 三插件硬编码 `compileSdk 34`）；`android-35`、`CMake 3.22.1` 由 Gradle 自动装。
+  - 许可文件（手写，需含官方哈希）：
+    - `licenses/android-sdk-license`：`8933bad161af4178b1185d1a37fbf41ea5269c55` + `24333f8a63b6825ea9c5514f83c2829b004d1fee`
+    - `licenses/android-sdk-preview-license`：`84831b9409646a918e30573bab4c9c91346d8abd`
+- **关键坑**：Gradle 自动装缺失 platform 前会校验 license；license 哈希不全会报 `Failed to install ... licenses not accepted`。
+  修好 license 哈希并装 `platforms;android-34` 后构建通过。
+- **构建**：签名文件取自 `feature/signing-config`，临时注入 `signingEnabled=true`；`pub get → build_runner →
+  analyze（121 issues 全 info，无 error/warning）→ build apk --release`。Gradle 阶段（增量）约 **508.9s**。
+  产物 **app-release.apk 74.5MB**，改名 `app-0.9.2.apk`。
+- **签名校验**：`apksigner verify --verbose` → **v1=false、v2=true、v3=false、v3.1=false、v4=false**、Signers=1；
+  `--print-certs` → `CN=STDeel, OU=Dev, O=IFFCheckPass`，SHA-256 `ed7379e83486704322dba43361dde16c307fe64f8fdabdc7e437f70eb457f933`
+  （与基准 0.7.4/AGENTS.md 完全一致）。
+- **发布**：`gh release create v0.9.2 --prerelease`（0.9.2 < 1.0.0 → Pre-Release）上传 `app-0.9.2.apk`。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.2
+  - 注：本次沙箱无 `feature/windows-support` 分支且无 `build-windows` workflow，无法产出 `stdeel-setup-0.9.2.exe`，
+    v0.9.2 暂仅 APK 单端；后续需用户侧有 Windows CI 后再补齐双端。
+- 收尾：恢复 `android/gradle.properties`、删除 `android/upload-keystore.jks`、`android/key.properties`，`main` 干净。
