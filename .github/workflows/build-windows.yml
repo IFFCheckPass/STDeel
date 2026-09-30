@@ -76,3 +76,4 @@ jobs:
           Write-Host "发布到 Release v$ver : $($exe.FullName) ($([math]::Round($exe.Length/1MB,1)) MB)"
           gh release upload "v$ver" $exe.FullName --repo $env:GITHUB_REPOSITORY --clobber
           Write-Host "已发布到 v$ver"
+        # v0.9.3 rebuild trigger: 首次因 v0.9.3 Release 尚未创建而 upload 失败，Release 就绪后重推触发。无害注释。
