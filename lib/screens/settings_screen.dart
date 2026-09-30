@@ -1,4 +1,4 @@
-/// 设置页 - 思谛 STDeel（v0.9.2 卡片化）
+/// 设置页 - 思谛 STDeel（v0.9.3 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
@@ -455,7 +455,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ===== 关于 / 更新 =====
           _ExpCard(
             title: '关于 / 更新',
-            summary: '版本 v0.9.2',
+            summary: '版本 v0.9.3',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -477,7 +477,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.2',
+              '思谛 STDeel · v0.9.3',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
@@ -856,7 +856,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final service = BackupService(db: AppDatabase.instance);
     try {
       showGlassSnackBar(context, '正在导出…');
-      final path = await service.exportBackup();
+      final providers = context.read<SettingsProvider>().providers;
+      final path = await service.exportBackup(providers: providers);
       if (!mounted) return;
       showGlassSnackBar(context, '备份已导出：$path', success: true);
     } catch (e) {
@@ -869,11 +870,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final service = BackupService(db: AppDatabase.instance);
     try {
       showGlassSnackBar(context, '正在导入…');
-      final r = await service.importBackup();
+      final r = await service.importBackup(
+        onRestoreProviders: (providers) =>
+            context.read<SettingsProvider>().replaceAllProviders(providers),
+      );
       if (!mounted) return;
+      final aiText = r.aiProviders > 0 ? '、AI 配置 ${r.aiProviders} 组' : '';
       showGlassSnackBar(
         context,
-        '导入完成：解题记录 ${r.solve} 条、知识点 ${r.knowledge} 条',
+        '导入完成：解题记录 ${r.solve} 条、知识点 ${r.knowledge} 条$aiText',
         success: true,
       );
     } catch (e) {
