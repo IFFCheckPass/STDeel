@@ -155,6 +155,12 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> replaceAllProviders(List<AiProvider> providers) async {
+    _providers = List.of(providers);
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> saveModel(String providerId, AiModel model) async {
     final p = _providers.firstWhere((x) => x.id == providerId,
         orElse: () => throw StateError('供应商不存在'));

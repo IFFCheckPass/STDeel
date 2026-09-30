@@ -10,6 +10,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 
 import '../data/database.dart';
+import '../models/ai_provider.dart';
 
 class BackupService {
   BackupService({required AppDatabase db}) : _db = db;
@@ -17,12 +18,14 @@ class BackupService {
   final AppDatabase _db;
 
   static const String _typeTag = 'stdeel-backup';
-  static const int _version = 1;
+  // v2：新增 ai_providers（AI 供应商含 API Key / Base URL / 模型）备份。
+  static const int _version = 2;
 
-  /// 导出全部解题记录 + 知识点到 JSON 文件。
+  /// 导出全部解题记录 + 知识点 + AI 供应商配置到 JSON 文件。
   ///
+  /// [providers] 为当前 AI 供应商列表（含 API Key），可为空。
   /// 返回保存路径；用户取消或失败抛异常。
-  Future<String> exportBackup() async {
+  Future<String> exportBackup({List<AiProvider>? providers}) async {
     final records = await _db.solveRecordDao.getAll();
     final knowledge = await _db.knowledgeDao.getAll();
 
@@ -32,6 +35,9 @@ class BackupService {
       'exported_at': DateTime.now().toIso8601String(),
       'solve_records': records.map(_solveRecordToJson).toList(),
       'knowledge': knowledge.map(_knowledgeToJson).toList(),
+      'ai_providers': (providers ?? const [])
+          .map((p) => p.toJson())
+          .toList(),
     };
 
     final bytes = utf8.encode(jsonEncode(payload));
@@ -51,8 +57,11 @@ class BackupService {
 
   /// 从 JSON 文件导入恢复。
   ///
-  /// 返回 (解题记录导入数, 知识点导入数)；格式非法抛异常。
-  Future<({int solve, int knowledge})> importBackup() async {
+  /// [onRestoreProviders] 非空时，将备份中的 AI 供应商配置（含 API Key）写回；
+  /// 返回 (解题记录导入数, 知识点导入数, AI 供应商导入数)；格式非法抛异常。
+  Future<({int solve, int knowledge, int aiProviders})> importBackup({
+    Future<void> Function(List<AiProvider> providers)? onRestoreProviders,
+  }) async {
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: '选择思谛备份文件',
       type: FileType.custom,
@@ -108,7 +117,18 @@ class BackupService {
         knowledgeImported++;
       }
     }
-    return (solve: solveImported, knowledge: knowledgeImported);
+
+    var aiImported = 0;
+    final aiList = decoded['ai_providers'];
+    if (onRestoreProviders != null && aiList is List && aiList.isNotEmpty) {
+      final restored = aiList
+          .map((e) => AiProvider.fromJson(
+              Map<String, dynamic>.from(e as Map<String, dynamic>)))
+          .toList();
+      await onRestoreProviders(restored);
+      aiImported = restored.length;
+    }
+    return (solve: solveImported, knowledge: knowledgeImported, aiProviders: aiImported);
   }
 
   Map<String, dynamic> _solveRecordToJson(SolveRecordEntity r) {

@@ -484,6 +484,12 @@ rm -f android/upload-keystore.jks android/key.properties
   （与基准 0.7.4/AGENTS.md 完全一致）。
 - **发布**：`gh release create v0.9.2 --prerelease`（0.9.2 < 1.0.0 → Pre-Release）上传 `app-0.9.2.apk`。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.2
-  - 注：本次沙箱无 `feature/windows-support` 分支且无 `build-windows` workflow，无法产出 `stdeel-setup-0.9.2.exe`，
-    v0.9.2 暂仅 APK 单端；后续需用户侧有 Windows CI 后再补齐双端。
+- **双端补齐（本次修正，不再依赖用户侧）**：拉取 `origin/feature/windows-support`（该分支留有
+  `.github/workflows/build-windows.yml`、`docs/BUILD-win.md`、`scripts/windows_installer.iss`、`windows/` 平台工程）。
+  用 `git checkout origin/main -- .` 覆盖共享文件（保留 windows 专属文件与 workflow），提交推回该分支
+  （commit `eb781a5`），自动触发 `build-windows` Actions（run `36704917225`，5m52s）→ Inno Setup 打包
+  `stdeel-setup-0.9.2.exe` 并 `gh release upload --clobber` 自动上传，v0.9.2 双端齐全
+  （`app-0.9.2.apk` + `stdeel-setup-0.9.2.exe`）。
+  - 教训：v0.9.2 初次发布时误判无 Windows CI，把双端补发推给用户；实际 Windows 生产链一直在
+    `feature/windows-support` 分支，每次发布必须按此流程补双端。
 - 收尾：恢复 `android/gradle.properties`、删除 `android/upload-keystore.jks`、`android/key.properties`，`main` 干净。
