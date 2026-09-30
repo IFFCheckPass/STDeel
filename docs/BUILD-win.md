@@ -141,3 +141,14 @@ gh release upload v<版本号> --repo IFFCheckPass/STDeel stdeel-setup-<版本�
 - **发布**：v0.9.2 双端齐全（`app-0.9.2.apk` + `stdeel-setup-0.9.2.exe`）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.2
 - **收尾**：docs 改动不经 workflow（paths-ignore `docs/**`），不会重复触发构建；本地删除无关副本，保持干净。
+
+### v0.9.3（✅ Windows 安装器已构建发布：本地备份新增 AI 供应商配置）
+- **版本**：`pubspec.yaml version: 0.9.3+30`（与 Android 版一致）。
+- **同步**：`git checkout origin/main -- .` 覆盖共享代码（commit `069cbca`），保留 windows 专属文件与 workflow。
+- **构建**：push 触发 `build-windows`。首次 run（36707620142）在「发布安装器到 GitHub Release」失败——因 v0.9.3 Release
+  尚未创建、`gh release upload` 找不到 tag；等 Android 侧 Release 就绪后，给 `.github/workflows/build-windows.yml`
+  加注释重推（`a9e5050`）触发重建（run 36713995216，约 5min 成功），`stdeel-setup-0.9.3.exe` 由 Actions `--clobber` 自动发布。
+- **发布**：v0.9.3 双端齐全（`app-0.9.3.apk` + `stdeel-setup-0.9.3.exe`）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.3
+- **教训**：Windows workflow 的自动发布步骤要求对应 Release 已存在；若 APK 与 exe 并行触发且 APK 更慢，
+  该步骤会先失败。Release 就绪后需重推触发（rerun 可能报 "workflow file may be broken"，改用微小 commit 触发）。
