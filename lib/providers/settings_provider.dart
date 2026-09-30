@@ -182,26 +182,50 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 拖动排序某阶段的模型顺序
+  /// 拖动排序某阶段的模型顺序（跨全部供应商的全局顺序）
   /// [stage]: 'split' | 'solve'
+  ///
+  /// 注意：必须与 UI 端 [_collectForSplit/_collectForSolve] 使用完全一致的
+  /// 过滤与排序规则，且把新顺序一次性写回 `_providers`（过去的实现只改了
+  /// 副本列表导致排序失效 / 刷新后复原）。
   Future<void> reorderStage(String providerId, String modelId, String stage,
       int oldIndex, int newIndex) async {
-    final p = _providers.firstWhere((x) => x.id == providerId,
-        orElse: () => throw StateError('供应商不存在'));
-    final models = List<AiModel>.from(
-        p.models.where((m) => m.multimodal || stage == 'solve').toList());
-    final currentIdx = models.indexWhere((m) => m.id == modelId);
-    if (currentIdx < 0) return;
-    if (newIndex > currentIdx) newIndex -= 1;
-    final item = models.removeAt(currentIdx);
-    models.insert(newIndex, item);
-    // 更新该阶段顺序
-    for (var i = 0; i < models.length; i++) {
-      if (stage == 'split') {
-        models[i] = models[i].copyWith(splitOrder: i);
-      } else {
-        models[i] = models[i].copyWith(solveOrder: i);
+    // 该阶段参与排序的全局列表（跨所有供应商）
+    final all = <(AiProvider, AiModel)>[];
+    for (final p in _providers) {
+      for (final m in p.models) {
+        if (stage == 'split') {
+          if (m.multimodal) all.add((p, m));
+        } else {
+          if (m.solveEnabled) all.add((p, m));
+        }
       }
+    }
+    // 与 UI 排序一致：先按对应阶段 order，再按供应商名（稳定、不依赖顺序字段并列）
+    all.sort((a, b) {
+      final oa = stage == 'split' ? a.$2.splitOrder : a.$2.solveOrder;
+      final ob = stage == 'split' ? b.$2.splitOrder : b.$2.solveOrder;
+      final c = oa.compareTo(ob);
+      if (c != 0) return c;
+      return a.$1.name.compareTo(b.$1.name);
+    });
+    // 调用方（widget）已按 ReorderableListView 规则将 newIndex 规范化
+    // （newIndex > oldIndex 时已 -1），故 currentIdx 应等于 oldIndex。
+    var currentIdx = all.indexWhere((e) => e.$2.id == modelId);
+    if (currentIdx < 0) currentIdx = oldIndex.clamp(0, all.length - 1);
+    // 目标位置直接用调用方规范化后的 newIndex，仅 clamp 兜底防止越界。
+    var ni = newIndex.clamp(0, all.length);
+    final item = all.removeAt(currentIdx);
+    all.insert(ni, item);
+    // 写回全局唯一序号，并同步到 _providers 的每个元素（副本不可见）
+    for (var i = 0; i < all.length; i++) {
+      final tgtProvider = all[i].$1;
+      final mIdx = tgtProvider.models.indexWhere((m) => m.id == all[i].$2.id);
+      if (mIdx < 0) continue;
+      tgtProvider.models[mIdx] = tgtProvider.models[mIdx].copyWith(
+        splitOrder: stage == 'split' ? i : tgtProvider.models[mIdx].splitOrder,
+        solveOrder: stage == 'solve' ? i : tgtProvider.models[mIdx].solveOrder,
+      );
     }
     await _persist();
     notifyListeners();

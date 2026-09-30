@@ -518,3 +518,22 @@ rm -f android/upload-keystore.jks android/key.properties
   `stdeel-setup-0.9.3.exe` 并 `--clobber` 上传成功。v0.9.3 双端齐全。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.3
 - 收尾：恢复 `android/gradle.properties`、删除签名文件、回退 `pubspec.lock`（镜像 URL 元数据差异）、删根目录 APK，`main` 干净。
+
+### v0.9.4（✅ 双端构建并发布：修复「模型调用顺序拖动失效」）
+- **版本**：`pubspec.yaml version: 0.9.4+31`（小版本 +1）。修复：`settings_provider.dart` 的
+  `reorderStage` 此前只对**副本列表**做 `models[i].copyWith(order:i)`，从未写回 `_providers`，
+  导致拖动后 UI 刷新即复原。现重写为「跨所有供应商构建与 UI 完全一致的全局列表 → 移动 →
+  写回全局唯一 order（0..n-1）」，并消除 widget 层与 provider 层重复 `-1` 造成的索引错位，
+  过滤条件（split 仅多模态 / solve 仅 solveEnabled）与 UI `_collectForSplit/_collectForSolve` 保持一致。
+- **工具链**：沙箱重建后按 v0.9.3 流程重新下载：Flutter 3.47.1（腾讯镜像 1.5G）、
+  Android SDK 组件（腾讯镜像）：`platform-36_r02.zip`、`build-tools_r36_linux.zip`、
+  `platform-tools_r37.0.1-linux.zip`、`android-ndk-r28b-linux.zip`（NDK=28.2.13676358）；
+  JDK 17.0.2（mise）由 gradle.properties 固定，`android/local.properties` 写 `sdk.dir=/opt/android` + `flutter.sdk=/opt/flutter`。
+- **构建**：build_runner → analyze（121 个 info，无 error/warning）→ 注入 `signingEnabled=true` 后
+  `flutter build apk --release`（1103.6s）→ 恢复 gradle.properties → `app-release.apk 74.6MB`。
+- **签名校验**：`apksigner verify --verbose` → **v1=false、v2=true、v3=false、v3.1=false、v4=false**、Signers=1；
+  `--print-certs` → `CN=STDeel`，SHA-256 `ed7379e8...f933`（与基准一致）。
+- **发布（双端）**：`gh release create v0.9.4 --prerelease` 上传 `app-0.9.4.apk`
+  （0.9.4 < 1.0.0 → Pre-Release）。随后将 `main` 合并同步到 `feature/windows-support` 并 push
+  触发 `build-windows` 构建 `stdeel-setup-0.9.4.exe` 上传到 v0.9.4。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.4
