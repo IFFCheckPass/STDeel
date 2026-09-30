@@ -129,3 +129,15 @@ gh release upload v<版本号> --repo IFFCheckPass/STDeel stdeel-setup-<版本�
 - **安装器**：`stdeel-setup-0.7.5.exe`，与 `app-0.7.5.apk` 同一 Pre-Release（0.7.5 < 1.0.0 → Pre-Release）。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.7.5
 - **收尾**：本次无需本地下载副本（Actions 直接发布）。
+
+### v0.9.2（✅ 已补双端，Windows 安装器随 build-windows 自动构建发布）
+- **版本**：`pubspec.yaml version: 0.9.2+29`（与 Android 版一致）。
+- **背景**：main 先发布 v0.9.2 时只有 APK；本次修正不再依赖用户侧补发，由代理自行拉取本分支完成双端。
+- **同步方式**（v0.7.7 同款，避免 unrelated-history）：`git checkout origin/main -- .` 覆盖共享代码
+  （保留 `windows/`、`docs/BUILD-win.md`、`.github/workflows/build-windows.yml`、`scripts/windows_installer.iss`、
+  `scripts/languages/` 等 main 中不存在的专属文件），仅版本号相关 3 文件变更，提交 commit `eb781a5` 推回本分支。
+- **构建**：push 自动触发 `build-windows`（run 36704917225），约 **5m52s** 成功（Flutter 3.47.1 windows-latest），
+  Inno Setup 打包 `stdeel-setup-0.9.2.exe` 并自动 `gh release upload --clobber` 上传。
+- **发布**：v0.9.2 双端齐全（`app-0.9.2.apk` + `stdeel-setup-0.9.2.exe`）。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.2
+- **收尾**：docs 改动不经 workflow（paths-ignore `docs/**`），不会重复触发构建；本地删除无关副本，保持干净。
