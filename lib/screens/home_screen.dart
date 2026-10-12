@@ -7,6 +7,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -349,10 +350,28 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 原生相册通道（Android）：ACTION_PICK 恒定拉起系统「相册」选择界面。
+  /// image_picker 0.8.13+ 在无 Android Photo Picker 的设备（荣耀/HarmonyOS 等）
+  /// 会退化为 ACTION_GET_CONTENT → 打开的是文件选择器，因此相册走原生通道。
+  static const MethodChannel _galleryChannel = MethodChannel('stdeel/gallery');
+
   Future<void> _pickImage(
     BuildContext context, {
     required bool fromCamera,
   }) async {
+    // Android 相册：优先原生 ACTION_PICK（保持相册选择界面），失败回退 image_picker
+    if (!fromCamera && Platform.isAndroid) {
+      try {
+        final path = await _galleryChannel.invokeMethod<String>('pick');
+        if (path == null || path.isEmpty) return; // 用户取消，静默结束
+        await _openEditor(context, path);
+        return;
+      } on PlatformException {
+        // 原生通道不可用（如 ROM 限制）：回退 image_picker
+      } on MissingPluginException {
+        // 通道未注册：回退 image_picker
+      }
+    }
     // 直接调起系统相机/相册（不再经 CameraScreen 中间页，避免可见残留）。
     final XFile? file;
     try {
@@ -368,10 +387,14 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     if (file == null || !mounted) return;
-    // 先进入编辑页（裁切/旋转），编辑完再进入 AnswerScreen 触发解题
+    await _openEditor(context, file.path);
+  }
+
+  /// 选图完成后：先进入编辑页（裁切/旋转），编辑完再进入 AnswerScreen 触发解题
+  Future<void> _openEditor(BuildContext context, String imagePath) async {
     final picked = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => ImageEditScreen(imagePath: file!.path),
+        builder: (_) => ImageEditScreen(imagePath: imagePath),
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
