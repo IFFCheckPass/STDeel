@@ -43,6 +43,8 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
   late final TextEditingController _modelCtrl;
   late bool _multimodal;
   bool _fetchingModels = false;
+  bool _testing = false;
+  ({bool ok, int latencyMs, String message})? _testResult;
 
   @override
   void initState() {
@@ -125,6 +127,57 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
                         : const Icon(Icons.cloud_download_outlined, size: 18),
                     label: Text(_fetchingModels ? '正在获取模型列表…' : '获取模型列表'),
                   ),
+                  const SizedBox(height: 12),
+                  // 连通性测试：针对当前正在编辑的这个模型即时验证
+                  FilledButton.icon(
+                    onPressed: _testing ? null : _testConnection,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.network_check, size: 18),
+                    label: Text(_testing ? '测试中…' : '测试连通性'),
+                  ),
+                  if (_testResult != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: (_testResult!.ok ? G.mint : G.coral)
+                            .withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: (_testResult!.ok ? G.mint : G.coral)
+                              .withOpacity(0.4),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            _testResult!.ok
+                                ? Icons.check_circle
+                                : Icons.cancel,
+                            color: _testResult!.ok ? G.mint : G.coral,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _testResult!.message,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _testResult!.ok ? G.mint : G.coral,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   const Divider(height: 1),
                   SwitchListTile(
@@ -290,6 +343,41 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
         },
       ),
     );
+  }
+
+  /// 连通性测试：用当前输入的 Model ID（允许未保存）即时验证该模型可达性
+  Future<void> _testConnection() async {
+    final modelId = _modelCtrl.text.trim();
+    if (widget.baseUrl.trim().isEmpty) {
+      showGlassSnackBar(context, '请先为供应商填写 Base URL', error: true);
+      return;
+    }
+    if (modelId.isEmpty) {
+      showGlassSnackBar(context, '请先填写 Model ID', error: true);
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
+    try {
+      final ai = context.read<AiService>();
+      final result = await ai.testConnection(
+        baseUrl: widget.baseUrl,
+        apiKey: widget.apiKey,
+        modelId: modelId,
+      );
+      if (!mounted) return;
+      setState(() => _testResult = result);
+      showGlassSnackBar(
+        context,
+        result.ok ? result.message : '测试失败：${result.message}',
+        success: result.ok,
+        error: !result.ok,
+      );
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
   }
 
   void _save() {

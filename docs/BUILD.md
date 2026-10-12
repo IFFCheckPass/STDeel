@@ -537,3 +537,31 @@ rm -f android/upload-keystore.jks android/key.properties
   （0.9.4 < 1.0.0 → Pre-Release）。随后将 `main` 合并同步到 `feature/windows-support` 并 push
   触发 `build-windows` 构建 `stdeel-setup-0.9.4.exe` 上传到 v0.9.4。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.4
+### v0.9.5（✅ 已成功编译并发布，小版本修复：0.9.4 → c 位 +1，相册选择界面回归 + 模型级连通性测试）
+- **版本**：`pubspec.yaml version: 0.9.5+32`；`settings_screen.dart` 角标/更新卡片 `v0.9.5`。
+- **bug（手机端「从相册选择」打开的是文件选择器）与修复**：
+  - **根因**：`pubspec.yaml` 的 `image_picker: ^1.0.7` 是宽约束，环境重建后 `pub get` 把传递依赖
+    `image_picker_android` 解析到 **0.8.13+23**；该版本起在无 Android Photo Picker 的设备
+    （荣耀/HarmonyOS 这类）`ImageSource.gallery` 回退为 `ACTION_GET_CONTENT` → 打开「文件选择器」
+    而非旧版 `ACTION_PICK` 的「系统相册」。行为随依赖版本漂移，与代码无关。
+  - **修复（不再依赖 image_picker 内部实现）**：
+    a. `MainActivity.kt` 新增 `stdeel/gallery` 通道 `pick` 方法：`Intent.ACTION_PICK` +
+       `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` 恒定拉起系统「相册」选择界面；
+       `onActivityResult` 中把临时授权的 content:// URI 立即拷贝到 cacheDir
+       （按 MIME 定扩展名 jpg/png/webp/gif/heic），返回绝对路径；取消返回 null。
+    b. `home_screen.dart` `_pickImage`：Android 相册优先走原生通道（取消静默结束），
+       `PlatformException/MissingPluginException` 时回退 image_picker；相机与 Windows 桌面路径不变。
+- **新增功能（模型级连通性测试）**：`model_edit_screen.dart` 增加「测试连通性」按钮 + 结果卡片，
+  用当前输入的 Model ID（允许未保存）+ 供应商 baseUrl/apiKey 即时验证单个模型可达性；
+  原有供应商页整体测试保留。
+- **环境重建（/opt 再次被重置，自动自愈）**：同 v0.9.0 流程——Flutter 3.47.1（flutter-io.cn）+
+  腾讯镜像直下 platform-36/build-tools 36.0.0/platform-tools r37/NDK r28c（文件名见 v0.9.0 段）；
+  build-tools 内层目录为 `android-16` 需摊平重命名为 `36.0.0`；插件 compileSdk 34→36 补丁照旧。
+- **构建**：analyze 0 error/warning；Gradle 阶段约 **950s**（全新环境首次编译）。产物 **74.6MB**，
+  改名 `app-0.9.5.apk`。
+- **签名校验**：v1=false、v2=true、v3=false、v3.1=false；`CN=STDeel`，SHA-256 `ed7379e8...f933`（与基准一致）。
+- **发布（双端）**：`gh release create v0.9.5 --prerelease` 上传 `app-0.9.5.apk`
+  （0.9.5 < 1.0.0 → Pre-Release）；`main` 合并到 `feature/windows-support` push 触发
+  `build-windows` 构建 `stdeel-setup-0.9.5.exe` 上传到 v0.9.5。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.5
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。

@@ -15,6 +15,14 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
 
+    companion object {
+        // 相册选择请求码（避开 image_picker 使用的 2342/2343 等区间）
+        private const val GALLERY_REQUEST = 4201
+    }
+
+    /// 相册选择进行中的 Dart 回调（ACTION_PICK 异步返回结果）
+    private var galleryResult: MethodChannel.Result? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -56,6 +64,73 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "stdeel/gallery",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // 从相册选图：用 ACTION_PICK 恒定拉起系统「相册」选择界面。
+                // （image_picker 高版本在无 Android Photo Picker 的设备上会退化
+                //  为 ACTION_GET_CONTENT → 打开的是文件选择器，非相册。）
+                "pick" -> {
+                    if (galleryResult != null) {
+                        result.error("BUSY", "相册选择正在进行中", null)
+                        return@setMethodCallHandler
+                    }
+                    galleryResult = result
+                    val intent = Intent(Intent.ACTION_PICK).apply {
+                        setDataAndType(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            "image/*",
+                        )
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    try {
+                        startActivityForResult(intent, GALLERY_REQUEST)
+                    } catch (e: Exception) {
+                        galleryResult = null
+                        result.error("NO_GALLERY", e.message ?: "无法打开相册", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != GALLERY_REQUEST) return
+        val cb = galleryResult ?: return
+        galleryResult = null
+        // 用户取消或未返回内容：success(null)，Dart 侧静默结束
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            cb.success(null)
+            return
+        }
+        try {
+            val uri = data.data!!
+            val mime = contentResolver.getType(uri) ?: "image/jpeg"
+            val ext = when (mime) {
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                "image/gif" -> "gif"
+                "image/heic", "image/heif" -> "heic"
+                else -> "jpg"
+            }
+            // ACTION_PICK 返回的是临时授权的 content:// URI，必须立即拷贝到应用缓存，
+            // 否则授权在 Activity 结束后失效
+            val dest = File(cacheDir, "gallery_${System.currentTimeMillis()}.$ext")
+            contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { input.copyTo(it) }
+            } ?: throw Exception("无法读取相册图片")
+            if (dest.length() <= 0) {
+                dest.delete()
+                throw Exception("相册图片为空")
+            }
+            cb.success(dest.absolutePath)
+        } catch (e: Exception) {
+            cb.error("COPY_FAILED", e.message ?: "读取相册图片失败", null)
         }
     }
 
