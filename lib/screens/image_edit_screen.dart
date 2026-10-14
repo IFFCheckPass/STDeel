@@ -57,6 +57,12 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
   double _fitScale = 1;
   Offset _fitOffset = Offset.zero;
 
+  // 视图矩阵：屏幕坐标 = T(offset)·S(scale)·T(pre)·R(angle)·图片坐标。
+  // 旋转合成进矩阵（v0.9.6），不再用 RotatedBox —— RotatedBox 会把父级的
+  // 紧约束转传给图片，导致 Image 被强制缩到视口大小、再被 Transform 缩小
+  // 成左上角小图（v0.9.5 及之前的"图片缩成一小块"缺陷根因）。
+  Matrix4 _viewMatrix = Matrix4.identity();
+
   // 裁切框（视口坐标），由用户手势自由调整
   Rect _crop = Rect.zero;
 
@@ -107,7 +113,10 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
   }
 
   /// 计算背景图片的放置（cover 撑满视口：宽度或高度至少一个方向撑满屏幕，
-  /// 溢出方向居中裁切，便于稳定取景），并初始化裁切框
+  /// 溢出方向居中裁切，便于稳定取景），并初始化裁切框。
+  ///
+  /// 同时把「平移→缩放→旋转」合成进单一视图矩阵 [_viewMatrix]：
+  /// 屏幕坐标 = T(offset) · S(scale) · T(pre) · R(angle) · 图片坐标。
   void _fitLayout() {
     if (_viewportSize == Size.zero || _imageSize == ui.Size.zero) return;
     final rs = _rotatedSize;
@@ -121,6 +130,23 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
       (vw - rs.width * scale) / 2,
       (vh - rs.height * scale) / 2,
     );
+
+    // 旋转合成进矩阵：q 次 90° 顺时针。图片坐标先旋转（含把旋转后的内容
+    // 拉回第一象限的平移 pre），再缩放，再平移到视口。
+    final w = _imageSize.width.toDouble();
+    final h = _imageSize.height.toDouble();
+    final pre = switch (_quarterTurns) {
+      1 => Offset(h, 0),
+      2 => Offset(w, h),
+      3 => Offset(0, w),
+      _ => Offset.zero,
+    };
+    _viewMatrix = Matrix4.identity()
+      ..translate(_fitOffset.dx, _fitOffset.dy)
+      ..scale(_fitScale)
+      ..translate(pre.dx, pre.dy)
+      ..rotateZ(_quarterTurns * math.pi / 2);
+
     _initCrop();
   }
 
@@ -438,7 +464,10 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
             });
           }
         }
-        // 背景图片固定：双指缩放/拖动不再移动图片，取景稳定
+        // 背景图片固定：双指缩放/拖动不再移动图片，取景稳定。
+        // 旋转已并入 _viewMatrix；OverflowBox 让图片脱离 Stack 的紧约束、
+        // 按原始像素尺寸渲染，再由 Transform 统一做 cover 缩放+平移+旋转，
+        // 保证底图始终撑满视口（v0.9.6 修复"图片缩在左上角"）。
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onPanStart: _onPanStart,
@@ -449,20 +478,21 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
             children: [
               ClipRect(
                 child: Transform(
-                  transform: Matrix4.identity()
-                    ..translate(_fitOffset.dx, _fitOffset.dy)
-                    ..scale(_fitScale),
+                  transform: _viewMatrix,
                   alignment: Alignment.topLeft,
-                  child: RotatedBox(
-                    quarterTurns: _quarterTurns,
-                    child: Image.memory(_bytes!,
-                        gaplessPlayback: true,
-                        // 显式给【未旋转】尺寸：RotatedBox 奇数转会交换宽高，
-                        // 故最终显示尺寸恰等于 _rotatedSize，与 cover 缩放
-                        // （_fitScale/_fitOffset，基于 _rotatedSize）精确匹配，
-                        // 保证底图始终撑满视口、无黑边。
-                        width: _imageSize.width,
-                        height: _imageSize.height),
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: 0,
+                    minHeight: 0,
+                    maxWidth: _imageSize.width,
+                    maxHeight: _imageSize.height,
+                    child: Image.memory(
+                      _bytes!,
+                      gaplessPlayback: true,
+                      width: _imageSize.width,
+                      height: _imageSize.height,
+                      fit: BoxFit.fill,
+                    ),
                   ),
                 ),
               ),

@@ -271,7 +271,8 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
             id: 'm-$ts',
             name: '新模型',
             modelId: '',
-            multimodal: false,
+            // v0.9.6 起统一多模态直答，新模型默认多模态
+            multimodal: true,
             solveEnabled: true,
             solveOrder: _models.length,
           ),

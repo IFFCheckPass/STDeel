@@ -1,7 +1,10 @@
 /// 模型编辑页 - 思谛 STDeel
 ///
-/// 编辑一个模型：API model id、自定义名称、是否多模态，以及其在
-/// 「拆图分割 / 读题解答」两阶段的启用开关。可从供应商端点拉取模型列表。
+/// 编辑一个模型：API model id、自定义名称。可从供应商端点拉取模型列表并即时
+/// 连通性测试。
+///
+/// v0.9.6 起移除「多模态开关 / 拆图分割-读题解答两阶段启用」：解题一律整图
+/// 直发模型（多模态直答），模型不再区分多模态属性，启停统一在「模型调用顺序」页。
 ///
 /// 本页 **不直接写入** SettingsProvider（避免未保存的新供应商找不到而抛异常），
 /// 而是通过 `Navigator.pop` 把编辑结果 `({AiModel? model, bool deleted})` 返回给
@@ -41,7 +44,6 @@ class ModelEditScreen extends StatefulWidget {
 class _ModelEditScreenState extends State<ModelEditScreen> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _modelCtrl;
-  late bool _multimodal;
   bool _fetchingModels = false;
   bool _testing = false;
   ({bool ok, int latencyMs, String message})? _testResult;
@@ -51,7 +53,6 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.initial.name);
     _modelCtrl = TextEditingController(text: widget.initial.modelId);
-    _multimodal = widget.initial.multimodal;
   }
 
   @override
@@ -67,9 +68,8 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
             ? '未命名模型'
             : _nameCtrl.text.trim(),
         modelId: _modelCtrl.text.trim(),
-        multimodal: _multimodal,
-        splitEnabled: widget.initial.splitEnabled,
-        splitOrder: widget.initial.splitOrder,
+        // v0.9.6 起所有模型统一按多模态直答处理，不再区分
+        multimodal: true,
         solveEnabled: widget.initial.solveEnabled,
         solveOrder: widget.initial.solveOrder,
       );
@@ -178,60 +178,6 @@ class _ModelEditScreenState extends State<ModelEditScreen> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 8),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _multimodal,
-                    onChanged: (v) => setState(() => _multimodal = v),
-                    title: const Row(
-                      children: [
-                        Icon(Icons.visibility_outlined,
-                            color: G.accent, size: 18),
-                        SizedBox(width: 10),
-                        Text('支持多模态（视觉 / 图片识别）',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 14)),
-                      ],
-                    ),
-                    subtitle: const Text(
-                      '勾选后，拆图分割（图片文字/图形转结构化文本）会优先使用该模型。仅支持文字输入的模型请保持关闭。',
-                      style: TextStyle(fontSize: 12, height: 1.5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            GlassSectionTitle('两阶段启用'),
-            GlassCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SwitchListTile(
-                    value: widget.initial.splitEnabled && _multimodal,
-                    onChanged: _multimodal
-                        ? (v) => setState(() {
-                              widget.initial.splitEnabled = v;
-                            })
-                        : null,
-                    title: const Text('参与拆图分割',
-                        style:
-                            TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                    subtitle: const Text('仅多模态模型可参与拆图分割',
-                        style: TextStyle(fontSize: 12)),
-                  ),
-                  SwitchListTile(
-                    value: widget.initial.solveEnabled,
-                    onChanged: (v) => setState(() {
-                      widget.initial.solveEnabled = v;
-                    }),
-                    title: const Text('参与读题解答',
-                        style:
-                            TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                    subtitle: const Text('未标记题优先非多模态，标记题/回退用多模态',
-                        style: TextStyle(fontSize: 12)),
-                  ),
                 ],
               ),
             ),
