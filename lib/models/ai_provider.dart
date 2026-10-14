@@ -189,26 +189,11 @@ String normalizeBaseUrl(String raw) {
 
 /// 预置默认供应商模板（API Key 留空，由用户填写）
 ///
-/// 默认给 DeepSeek（非多模态）、通义千问 VL（多模态）、NVIDIA NIM（多模态）。
+/// v0.9.6 起解题一律整图直发（多模态直答），预置全部为多模态模型：
+/// 通义千问 VL、NVIDIA NIM、智谱 GLM-4V。
 List<AiProvider> defaultAiProviders() {
   final ts = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
   return [
-    AiProvider(
-      id: 'preset-deepseek',
-      name: 'DeepSeek',
-      baseUrl: 'https://api.deepseek.com/v1',
-      apiKey: '',
-      models: [
-        AiModel(
-          id: 'm-deepseek-chat-$ts',
-          name: 'V3',
-          modelId: 'deepseek-chat',
-          multimodal: false,
-          solveEnabled: true,
-          solveOrder: 0,
-        ),
-      ],
-    ),
     AiProvider(
       id: 'preset-qwen-vl',
       name: '通义千问 VL',
@@ -220,10 +205,8 @@ List<AiProvider> defaultAiProviders() {
           name: 'VL',
           modelId: 'qwen-vl-plus',
           multimodal: true,
-          splitEnabled: true,
           solveEnabled: true,
-          splitOrder: 0,
-          solveOrder: 1,
+          solveOrder: 0,
         ),
       ],
     ),
@@ -238,9 +221,23 @@ List<AiProvider> defaultAiProviders() {
           name: '2.5VL',
           modelId: 'qwen/qwen2.5-vl-72b-instruct',
           multimodal: true,
-          splitEnabled: true,
           solveEnabled: true,
-          splitOrder: 1,
+          solveOrder: 1,
+        ),
+      ],
+    ),
+    AiProvider(
+      id: 'preset-glm-4v',
+      name: '智谱 GLM',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: '',
+      models: [
+        AiModel(
+          id: 'm-glm-4v-$ts',
+          name: 'GLM-4V',
+          modelId: 'glm-4v-plus',
+          multimodal: true,
+          solveEnabled: true,
           solveOrder: 2,
         ),
       ],

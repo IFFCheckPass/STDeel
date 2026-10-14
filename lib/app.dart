@@ -105,7 +105,6 @@ class AppProviders extends StatelessWidget {
         ),
         ChangeNotifierProvider<SolveProvider>(
           create: (ctx) => SolveProvider(
-            aiService: ctx.read<AiService>(),
             failoverManager: ctx.read<FailoverManager>(),
             syncService: ctx.read<SyncService>(),
             notificationService: ctx.read<NotificationService>(),

@@ -35,8 +35,6 @@ class _AnswerScreenState extends State<AnswerScreen> {
   /// 流式期间自动滚动到底部
   final _scrollCtrl = ScrollController();
   bool _solvingTriggered = false;
-  /// 多候选卷次弹窗防重入
-  bool _paperDialogShown = false;
 
   @override
   void initState() {
@@ -59,12 +57,8 @@ class _AnswerScreenState extends State<AnswerScreen> {
     _solvingTriggered = true;
     final settings = context.read<SettingsProvider>();
     final solve = context.read<SolveProvider>();
-    final splitModels = settings.buildSplitChain();
-    final plainModels = settings.buildSolveChainPlain();
-    final multimodalModels = settings.buildSolveChainMultimodal();
-    if (splitModels.isEmpty &&
-        plainModels.isEmpty &&
-        multimodalModels.isEmpty) {
+    final models = settings.buildModelChain();
+    if (models.isEmpty) {
       showGlassSnackBar(
         context,
         '请先到「设置 → AI 模型组合」配置供应商与模型',
@@ -76,9 +70,7 @@ class _AnswerScreenState extends State<AnswerScreen> {
     // 这里仅 fire 一次即可。
     solve.solve(
       imagePath: widget.imagePath!,
-      splitModels: splitModels,
-      plainModels: plainModels,
-      multimodalModels: multimodalModels,
+      models: models,
       thinkTimeout: settings.thinkTimeout,
     );
   }
@@ -103,15 +95,6 @@ class _AnswerScreenState extends State<AnswerScreen> {
     final solve = context.watch<SolveProvider>();
     final state = solve.state;
 
-    // 多套答案册候选：等待用户选择当前卷次（弹窗一次）
-    if (solve.hasPaperChoice && !_paperDialogShown) {
-      _paperDialogShown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _showPaperChoice(solve);
-      });
-    }
-
     // 流式期间增量到达 → 滚到底部
     if (state.status == SolveStatus.thinking ||
         state.status == SolveStatus.answering) {
@@ -131,59 +114,6 @@ class _AnswerScreenState extends State<AnswerScreen> {
       ),
       body: _buildBody(context, state),
     );
-  }
-
-  /// 多候选卷次弹窗：用户选择当前卷次后继续认领，取消则回退 AI 解题
-  Future<void> _showPaperChoice(SolveProvider solve) async {
-    final papers = solve.pendingPapers ?? const [];
-    if (papers.isEmpty) {
-      _paperDialogShown = false;
-      return;
-    }
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text('选择当前卷次',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-            const SizedBox(height: 4),
-            Text(
-              '检测到多套答案册都包含本页题号，请选择当前正在做的卷子；'
-              '选错卷子可能导致答案不匹配',
-              style: TextStyle(fontSize: 12, color: G.textFaint, height: 1.5),
-            ),
-            const SizedBox(height: 12),
-            for (final p in papers)
-              ListTile(
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                leading: const Icon(Icons.auto_stories_outlined,
-                    color: G.accent),
-                title: Text(p.name),
-                subtitle: const Text('题号已匹配',
-                    style: TextStyle(fontSize: 11)),
-                onTap: () => Navigator.pop(ctx, p.id),
-              ),
-            const Divider(),
-            TextButton.icon(
-              onPressed: () => Navigator.pop(ctx, null),
-              icon: const Icon(Icons.close, size: 18),
-              label: const Text('不使用答案库，直接 AI 解题'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted) return;
-    if (picked != null) {
-      await solve.resumeWithPaper(picked);
-    } else {
-      await solve.cancelPaperChoice();
-    }
-    _paperDialogShown = false;
   }
 
   Widget _buildBody(BuildContext context, SolveUiState state) {

@@ -182,38 +182,24 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 拖动排序某阶段的模型顺序（跨全部供应商的全局顺序）
-  /// [stage]: 'split' | 'solve'
+  /// 拖动调整模型调用顺序（跨全部供应商的全局唯一顺序）。
   ///
-  /// 注意：必须与 UI 端 [_collectForSplit/_collectForSolve] 使用完全一致的
-  /// 过滤与排序规则，且把新顺序一次性写回 `_providers`（过去的实现只改了
-  /// 副本列表导致排序失效 / 刷新后复原）。
-  Future<void> reorderStage(String providerId, String modelId, String stage,
-      int oldIndex, int newIndex) async {
-    // 该阶段参与排序的全局列表（跨所有供应商）
+  /// 注意：必须与 UI 端的收集/排序规则完全一致（按 solveOrder，再按供应商名），
+  /// 且把新顺序一次性写回 `_providers`（过去的实现只改了副本列表导致排序失效）。
+  Future<void> reorderModels(int oldIndex, int newIndex) async {
     final all = <(AiProvider, AiModel)>[];
     for (final p in _providers) {
       for (final m in p.models) {
-        if (stage == 'split') {
-          if (m.multimodal) all.add((p, m));
-        } else {
-          if (m.solveEnabled) all.add((p, m));
-        }
+        all.add((p, m));
       }
     }
-    // 与 UI 排序一致：先按对应阶段 order，再按供应商名（稳定、不依赖顺序字段并列）
     all.sort((a, b) {
-      final oa = stage == 'split' ? a.$2.splitOrder : a.$2.solveOrder;
-      final ob = stage == 'split' ? b.$2.splitOrder : b.$2.solveOrder;
-      final c = oa.compareTo(ob);
+      final c = a.$2.solveOrder.compareTo(b.$2.solveOrder);
       if (c != 0) return c;
       return a.$1.name.compareTo(b.$1.name);
     });
-    // 调用方（widget）已按 ReorderableListView 规则将 newIndex 规范化
-    // （newIndex > oldIndex 时已 -1），故 currentIdx 应等于 oldIndex。
-    var currentIdx = all.indexWhere((e) => e.$2.id == modelId);
-    if (currentIdx < 0) currentIdx = oldIndex.clamp(0, all.length - 1);
-    // 目标位置直接用调用方规范化后的 newIndex，仅 clamp 兜底防止越界。
+    if (all.isEmpty) return;
+    var currentIdx = oldIndex.clamp(0, all.length - 1);
     var ni = newIndex.clamp(0, all.length);
     final item = all.removeAt(currentIdx);
     all.insert(ni, item);
@@ -222,45 +208,45 @@ class SettingsProvider extends ChangeNotifier {
       final tgtProvider = all[i].$1;
       final mIdx = tgtProvider.models.indexWhere((m) => m.id == all[i].$2.id);
       if (mIdx < 0) continue;
-      tgtProvider.models[mIdx] = tgtProvider.models[mIdx].copyWith(
-        splitOrder: stage == 'split' ? i : tgtProvider.models[mIdx].splitOrder,
-        solveOrder: stage == 'solve' ? i : tgtProvider.models[mIdx].solveOrder,
-      );
+      tgtProvider.models[mIdx] =
+          tgtProvider.models[mIdx].copyWith(solveOrder: i);
     }
     await _persist();
     notifyListeners();
   }
 
-  /// 切换某模型在某阶段的启用状态
-  Future<void> toggleStage(String providerId, String modelId, String stage) async {
+  /// 切换某模型是否参与解题调用
+  Future<void> toggleModelEnabled(String providerId, String modelId) async {
     final p = _providers.firstWhere((x) => x.id == providerId,
         orElse: () => throw StateError('供应商不存在'));
     final mIdx = p.models.indexWhere((m) => m.id == modelId);
     if (mIdx < 0) return;
-    if (stage == 'split') {
-      p.models[mIdx] = p.models[mIdx].copyWith(
-          splitEnabled: !p.models[mIdx].splitEnabled);
-    } else {
-      p.models[mIdx] = p.models[mIdx].copyWith(
-          solveEnabled: !p.models[mIdx].solveEnabled);
-    }
+    p.models[mIdx] =
+        p.models[mIdx].copyWith(solveEnabled: !p.models[mIdx].solveEnabled);
     await _persist();
     notifyListeners();
   }
 
-  // ---------- 两阶段调用链生成 ----------
+  // ---------- 调用链生成 ----------
 
-  /// 拆图分割阶段调用链：仅多模态且开启 split 的模型，按 splitOrder 排序
-  List<AiModelConfig> buildSplitChain() {
+  /// 模型调用链：所有已启用且信息完整的模型，按 solveOrder 全局排序。
+  ///
+  /// v0.9.6 起移除「拆图分割」两阶段逻辑：解题直接整图发给模型（多模态直答），
+  /// 配置中不再区分多模态/非多模态，也不再有拆图/解答两条链。
+  List<AiModelConfig> buildModelChain() {
     final list = <(AiModel, AiProvider)>[];
     for (final p in _providers) {
       for (final m in p.models) {
-        if (m.multimodal && m.splitEnabled && m.hasModelId && p.isComplete) {
+        if (m.solveEnabled && m.hasModelId && p.isComplete) {
           list.add((m, p));
         }
       }
     }
-    list.sort((a, b) => a.$1.splitOrder.compareTo(b.$1.splitOrder));
+    list.sort((a, b) {
+      final c = a.$1.solveOrder.compareTo(b.$1.solveOrder);
+      if (c != 0) return c;
+      return a.$2.name.compareTo(b.$2.name);
+    });
     return list
         .map((e) => e.$1.toModelConfig(
             providerName: e.$2.name,
@@ -268,48 +254,6 @@ class SettingsProvider extends ChangeNotifier {
             apiKey: e.$2.apiKey))
         .toList();
   }
-
-  /// 读题解答阶段·非多模态链（省经费优先），按 solveOrder 排序
-  List<AiModelConfig> buildSolveChainPlain() {
-    final list = <(AiModel, AiProvider)>[];
-    for (final p in _providers) {
-      for (final m in p.models) {
-        if (!m.multimodal && m.solveEnabled && m.hasModelId && p.isComplete) {
-          list.add((m, p));
-        }
-      }
-    }
-    list.sort((a, b) => a.$1.solveOrder.compareTo(b.$1.solveOrder));
-    return list
-        .map((e) => e.$1.toModelConfig(
-            providerName: e.$2.name,
-            baseUrl: e.$2.baseUrl,
-            apiKey: e.$2.apiKey))
-        .toList();
-  }
-
-  /// 读题解答阶段·多模态链（标记题/回退用），按 solveOrder 排序
-  List<AiModelConfig> buildSolveChainMultimodal() {
-    final list = <(AiModel, AiProvider)>[];
-    for (final p in _providers) {
-      for (final m in p.models) {
-        if (m.multimodal && m.solveEnabled && m.hasModelId && p.isComplete) {
-          list.add((m, p));
-        }
-      }
-    }
-    list.sort((a, b) => a.$1.solveOrder.compareTo(b.$1.solveOrder));
-    return list
-        .map((e) => e.$1.toModelConfig(
-            providerName: e.$2.name,
-            baseUrl: e.$2.baseUrl,
-            apiKey: e.$2.apiKey))
-        .toList();
-  }
-
-  /// 兼容旧调用方：整体读题解答链 = 非多模态在前、多模态在后（成本优先） 
-  List<AiModelConfig> buildModelChain() =>
-      [...buildSolveChainPlain(), ...buildSolveChainMultimodal()];
 
   // ---------- 通用设置 ----------
 

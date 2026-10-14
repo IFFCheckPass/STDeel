@@ -565,3 +565,37 @@ rm -f android/upload-keystore.jks android/key.properties
   `build-windows` 构建 `stdeel-setup-0.9.5.exe` 上传到 v0.9.5。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.5
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 `main` 干净。
+
+### v0.9.6（✅ 双端构建并发布，小版本修复：0.9.5 → c 位 +1）
+- **版本**：`pubspec.yaml version: 0.9.6+33`；`settings_screen.dart` 角标/更新卡片 `v0.9.6`。
+- **本次变更（移除拆题逻辑 + 图片编辑页修复）**：
+  1. **移除「拆图分割」两阶段管线，改回多模态直答**：0.9.0-0.9.5 的
+     「Stage A 拆图分割 → 答案库匹配 → Stage B 分组解答」实测拆题成功率极低、
+     失败后不能自动回退且徒增耗时，整体移除。`solve()` 恢复为整图（base64）
+     直接交调用链按序流式解答（`_solveImage`，Failover 语义保留）；删除
+     `_trySplitImage`/`_matchFromLibrary`/`_solveStageB`/并行 `_streamSolveGroup`/
+     卷次弹窗（`resumeWithPaper`/`cancelPaperChoice`/`hasPaperChoice`）等全套机制。
+  2. **模型配置只保留多模态语义**：`SettingsProvider.buildModelChain()` 收敛为
+     单链（全部启用且完整的模型按 solveOrder 全局排序，不再按多模态/拆图分组）；
+     `reorderStage/toggleStage` 简化为 `reorderModels/toggleModelEnabled`；
+     「模型调用顺序」页改为单板块（停用模型仍显示可重新开启）；模型编辑页移除
+     多模态开关与两阶段启用卡片（保存时统一 `multimodal: true`）；默认预置换成
+     通义千问 VL / NVIDIA NIM / 智谱 GLM-4V（全部多模态）；删除
+     `AiConfig.imageSplitPrompt`/`questionExtractPrompt`。
+  3. **图片编辑页「图片缩在左上角」修复**：根因是 `StackFit.expand` 的紧约束
+     把 `Image` 强制为视口尺寸，外层 `Transform` 再乘以 <1 的 cover 缩放 →
+     双重缩小。修复：弃用 `RotatedBox`，把旋转（q×90° 顺时针，含 pre 平移）
+     合成进 `_viewMatrix = T(offset)·S(scale)·T(pre)·R(angle)`；`Image` 外包
+     `OverflowBox` 脱离紧约束按原始像素渲染，`Transform` 一次完成缩放+平移+旋转，
+     cover 铺满逻辑在任意旋转角下精确成立。`_confirm()` 的视口→旋转图坐标映射
+     与 isolate 旋转后裁切逻辑不变。
+- **构建**：`flutter build apk --release -PsigningEnabled`；analyze 0 error/warning、
+  `flutter test` 全绿。Gradle 阶段约 991.1s。产物 app-release.apk 74.4MB，改名
+  `app-0.9.6.apk`。
+- **签名**：`feature/signing-config` 取 jks/key.properties（不并入 main）；
+  `apksigner verify` 仅 v2（v1/v3=false）；`--print-certs` CN=STDeel。
+- **发布（双端）**：`gh release create v0.9.6 --prerelease`（0.9.6 < 1.0.0 →
+  Pre-Release）上传 `app-0.9.6.apk`；`feature/windows-support` merge main 后 push
+  触发 build-windows Actions 构建 `stdeel-setup-0.9.6.exe` 上传同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.6
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
