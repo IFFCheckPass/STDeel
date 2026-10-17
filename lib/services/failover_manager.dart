@@ -92,8 +92,34 @@ class FailoverManager {
         return;
       }
 
-      for (var i = 0; i < models.length; i++) {
-        final model = models[i];
+      // 带图请求硬防护：纯文本（非多模态）模型读不到图片，只会回复
+      // "无法读到图片"并按系统提示词包成 JSON，被当作成功结果展示。
+      // 因此带图时直接跳过非多模态模型（记录日志），只把图片交给
+      // 支持视觉的模型（v0.8 稳定行为：图片永远由多模态模型读取）。
+      var chain = models;
+      if (base64Image != null && base64Image.isNotEmpty) {
+        final multimodalOnly =
+            models.where((m) => m.multimodal).toList(growable: false);
+        final skipped =
+            models.where((m) => !m.multimodal).map((m) => m.name).toList();
+        if (multimodalOnly.isEmpty) {
+          const msg = '当前启用的模型均不支持图片识别（多模态）。'
+              '请到「设置 → AI 模型组合」编辑支持视觉的模型并勾选「支持多模态」。';
+          _log(msg);
+          _notifier.notifyFailure('解题失败：没有可读取图片的模型');
+          if (!controller.isClosed) {
+            controller.add(const AiFailed(msg));
+          }
+          return;
+        }
+        if (skipped.isNotEmpty) {
+          _log('带图请求跳过非多模态模型：${skipped.join('、')}');
+        }
+        chain = multimodalOnly;
+      }
+
+      for (var i = 0; i < chain.length; i++) {
+        final model = chain[i];
         final (ok, reason) = await _trySingleStage(
           controller: controller,
           model: model,
@@ -108,8 +134,8 @@ class FailoverManager {
         }
         failures.add('${model.name}（${model.model}）：${reason ?? '无响应'}');
 
-        if (i < models.length - 1) {
-          final next = models[i + 1];
+        if (i < chain.length - 1) {
+          final next = chain[i + 1];
           final switchMsg = '${model.name} 失败，自动切换至 ${next.name}';
           _log('$switchMsg\n原因：$reason');
           _notifier.notifyFailover(switchMsg);
