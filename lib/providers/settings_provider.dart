@@ -229,10 +229,12 @@ class SettingsProvider extends ChangeNotifier {
 
   // ---------- 调用链生成 ----------
 
-  /// 模型调用链：所有已启用且信息完整的模型，按 solveOrder 全局排序。
+  /// 模型调用链：所有已启用且信息完整的模型，按 solveOrder 全局排序，
+  /// 再做 v0.8 式稳定分区：多模态在前、非多模态在后（各组内保持全局顺序）。
   ///
-  /// v0.9.6 起移除「拆图分割」两阶段逻辑：解题直接整图发给模型（多模态直答），
-  /// 配置中不再区分多模态/非多模态，也不再有拆图/解答两条链。
+  /// 解题为整图直答（带原图）：必须优先由多模态模型读取。若纯文本模型排在
+  /// 链首，它读不到图片会回复"无法读到图片"并按系统提示词包成 JSON，
+  /// 被 Failover 当作成功结果展示（v0.9.6 回归，已修复）。
   List<AiModelConfig> buildModelChain() {
     final list = <(AiModel, AiProvider)>[];
     for (final p in _providers) {
@@ -247,7 +249,10 @@ class SettingsProvider extends ChangeNotifier {
       if (c != 0) return c;
       return a.$2.name.compareTo(b.$2.name);
     });
-    return list
+    // v0.8 稳定分区：multimodal 在前（Dart sort 非稳定，用分区保持组内全局序）
+    final multi = list.where((e) => e.$1.multimodal).toList(growable: false);
+    final plain = list.where((e) => !e.$1.multimodal).toList(growable: false);
+    return [...multi, ...plain]
         .map((e) => e.$1.toModelConfig(
             providerName: e.$2.name,
             baseUrl: e.$2.baseUrl,

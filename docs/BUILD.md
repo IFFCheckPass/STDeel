@@ -599,3 +599,27 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 build-windows Actions 构建 `stdeel-setup-0.9.6.exe` 上传同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.6
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.7（✅ 双端构建并发布，小版本修复：0.9.6 → c 位 +1，"所有 AI 都报无法读到图片"）
+- **版本**：`pubspec.yaml version: 0.9.7+34`；`settings_screen.dart` 角标/更新卡片 `v0.9.7`。
+- **全链路排查（根因）**：
+  - "无法读到图片"**不是应用内文案**（全仓 grep 无此串），而是**纯文本模型自己的回答**被当作解题结果展示。
+  - v0.9.6 把解题改为整图直答、`buildModelChain()` 仅按 `solveOrder` 全局排序、**不再保证多模态优先**
+    （迁移的旧组合 solveOrder 全为 0 时按供应商名排序，DeepSeek 等纯文本模型会排到链首）。
+    整图请求先打到纯文本模型 → 它读不到 `image_url` 内容 → 按系统提示词把"无法读到图片"包成
+    `{"questions":[...]}` 返回 → Failover 收到 `AiDone`（questions 非空）当作**成功**展示，不再切换模型。
+- **修复（复用 v0.8 稳定行为 + 双层防护）**：
+  1. `settings_provider.buildModelChain()`：全局排序后做 **v0.8 式稳定分区——多模态在前、非多模态在后**
+     （Dart sort 非稳定，改用 where 分区保持组内全局序）。带图请求永远先由多模态模型读取。
+  2. `failover_manager._run` **硬防护**：`base64Image` 非空时过滤掉非 multimodal 模型（记录跳过日志），
+     纯文本模型不再收到图片请求；若过滤后链为空 → `AiFailed` 明确提示"当前启用的模型均不支持图片识别，
+     请到设置勾选支持多模态"，不再产生"无法读到图片"的假成功结果。
+  3. 文档拆分路径 `document_split_service` 自带多模态稳定排序，无需改动；`retry` 为纯文本不受影响。
+- **构建环境自愈（沙箱 /opt 再次被重置）**：Flutter 3.47.1（腾讯镜像）→ /opt/flutter；
+  Android SDK 腾讯镜像直下 platform-36/35 + build-tools r36 + platform-tools + NDK r28c；
+  cmdline-tools + `JAVA_HOME=…/java/17.0.2` sdkmanager 补 platform-34；`flutter precache --android` 预取引擎。
+- **验证**：`flutter analyze` 0 error/0 warning、`flutter test` 全绿。
+- **发布（双端）**：`gh release create v0.9.7 --prerelease`（< 1.0.0 → Pre-Release）上传 `app-0.9.7.apk`；
+  `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.7.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.7
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
