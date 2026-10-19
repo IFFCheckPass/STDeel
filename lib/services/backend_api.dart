@@ -136,6 +136,17 @@ class BackendApi {
     await _prefsCache!.setString(AppConfig.keyAiCombos, json);
   }
 
+  /// 通用 prefs 字符串读写（数据完整性快照/腐损留底用）
+  Future<String?> getPrefsString(String key) async {
+    _prefsCache ??= await SharedPreferences.getInstance();
+    return _prefsCache!.getString(key);
+  }
+
+  Future<void> setPrefsString(String key, String value) async {
+    _prefsCache ??= await SharedPreferences.getInstance();
+    await _prefsCache!.setString(key, value);
+  }
+
   Future<int> getThinkTimeoutSeconds() async {
     _prefsCache ??= await SharedPreferences.getInstance();
     return _prefsCache!.getInt(AppConfig.keyThinkTimeoutSeconds) ??

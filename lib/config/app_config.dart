@@ -21,6 +21,14 @@ class AppConfig {
   static const String keyUsername = 'username';
   static const String keyUserApiKey = 'user_api_key';
   static const String keyAiCombos = 'ai_combos_json';
+  // 数据完整性防呆（T0 级保护，见 AGENTS.md「数据完整性强制规则」）：
+  // - keyAiCombosPrev：每次覆盖写模型配置前，把上一份原始 JSON 留底
+  // - keyAiCombosCorrupt：解析失败/无法识别的原始 JSON 快照（绝不静默丢弃）
+  // - keyIntegritySnapshot / keyIntegritySnapshotPrev：启动核查时的关键数据快照
+  static const String keyAiCombosPrev = 'ai_combos_json_prev';
+  static const String keyAiCombosCorrupt = 'ai_combos_json_corrupt';
+  static const String keyIntegritySnapshot = 'integrity_snapshot_json';
+  static const String keyIntegritySnapshotPrev = 'integrity_snapshot_prev_json';
   static const String keyThinkTimeoutSeconds = 'think_timeout_seconds';
   static const String keyThemeMode = 'theme_mode'; // system | light | dark
   static const String keyFaultLogs = 'fault_logs_json'; // 故障码记录诊断日志

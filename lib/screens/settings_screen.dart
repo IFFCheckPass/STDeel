@@ -1,4 +1,4 @@
-/// 设置页 - 思谛 STDeel（v0.9.7 卡片化）
+/// 设置页 - 思谛 STDeel（v0.9.8 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
@@ -18,6 +18,7 @@ import '../models/ai_provider.dart' show normalizeBaseUrl;
 import '../providers/settings_provider.dart';
 import '../services/backup_service.dart';
 import '../services/backend_api.dart';
+import '../services/data_integrity_service.dart';
 import '../services/fault_log_service.dart';
 import '../services/image_cache_service.dart';
 import '../services/sync_service.dart';
@@ -51,6 +52,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _usernameCtrl = TextEditingController();
       _initialized = true;
       _loadCacheStats();
+      // 启动核查是异步的：延迟回填一次核查摘要（核查未完成则再等一轮）
+      _refreshIntegrityLater();
     }
     final s = context.read<SettingsProvider>();
     if (s.loaded && !_didInitialSync) {
@@ -64,6 +67,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final stats = await context.read<ImageCacheService>().stats();
     if (!mounted) return;
     setState(() => _cacheStats = stats);
+  }
+
+  /// 启动核查延迟回填（核查在 SettingsProvider.load 尾部异步执行）
+  Future<void> _refreshIntegrityLater() async {
+    for (var i = 0; i < 5; i++) {
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (!mounted) return;
+      if (DataIntegrityService.last != null) break;
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _clearImageCache() async {
@@ -455,7 +468,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ===== 关于 / 更新 =====
           _ExpCard(
             title: '关于 / 更新',
-            summary: '版本 v0.9.7',
+            summary: '版本 v0.9.8',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -477,7 +490,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.7',
+              '思谛 STDeel · v0.9.8',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
@@ -588,9 +601,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildStorage(BuildContext context) {
+    final integrity = DataIntegrityService.last;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 启动核查摘要（每次启动强制核查，结果实时可见）
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: (integrity == null || integrity.allOk
+                    ? G.mint
+                    : G.amber)
+                .withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: (integrity == null || integrity.allOk
+                      ? G.mint
+                      : G.amber)
+                  .withOpacity(0.35),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                integrity == null
+                    ? Icons.hourglass_top_rounded
+                    : (integrity.allOk
+                        ? Icons.verified_rounded
+                        : Icons.warning_amber_rounded),
+                size: 16,
+                color: integrity == null || integrity.allOk
+                    ? G.mint
+                    : G.amber,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  integrity == null
+                      ? '启动数据核查进行中…'
+                      : '启动核查：${integrity.summary}'
+                          '${integrity.allOk ? '' : '\n风险：${integrity.issues.join('；')}'}',
+                  style: TextStyle(
+                      fontSize: 11.5, height: 1.5, color: G.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
         Row(
           children: [
             const Icon(Icons.photo_library_outlined,
@@ -856,8 +915,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final service = BackupService(db: AppDatabase.instance);
     try {
       showGlassSnackBar(context, '正在导出…');
-      final providers = context.read<SettingsProvider>().providers;
-      final path = await service.exportBackup(providers: providers);
+      final settings = context.read<SettingsProvider>();
+      final path = await service.exportBackup(
+        providers: settings.providers,
+        username: settings.username,
+      );
       if (!mounted) return;
       showGlassSnackBar(context, '备份已导出：$path', success: true);
     } catch (e) {
@@ -873,18 +935,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final r = await service.importBackup(
         onRestoreProviders: (providers) =>
             context.read<SettingsProvider>().replaceAllProviders(providers),
+        onRestoreUsername: (username) =>
+            context.read<SettingsProvider>().setUsername(username),
       );
       if (!mounted) return;
-      final aiText = r.aiProviders > 0 ? '、AI 配置 ${r.aiProviders} 组' : '';
-      showGlassSnackBar(
-        context,
-        '导入完成：解题记录 ${r.solve} 条、知识点 ${r.knowledge} 条$aiText',
-        success: true,
-      );
+      final parts = <String>[
+        '解题记录 ${r.solve} 条',
+        '知识点 ${r.knowledge} 条',
+        if (r.aiProviders > 0) 'AI 配置 ${r.aiProviders} 组',
+        if (r.usernameRestored) '账号已恢复绑定',
+      ];
+      final buf = StringBuffer('导入完成：${parts.join('、')}');
+      if (!r.hasAiConfig) {
+        buf.write('\n注意：该备份为旧版格式，未包含 AI 模型配置，需手动重新填写');
+      }
+      showGlassSnackBar(context, buf.toString(), success: true);
+      if (r.warnings.isNotEmpty) {
+        _showImportWarnings(r.warnings);
+      }
     } catch (e) {
       if (!mounted) return;
       showGlassSnackBar(context, '导入失败：$e', error: true);
     }
+  }
+
+  /// 导入警告明细弹窗（AI 配置恢复失败/个别记录失败等精确信息）
+  void _showImportWarnings(List<String> warnings) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('导入警告'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final w in warnings)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 16, color: G.amber),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(w,
+                            style:
+                                const TextStyle(fontSize: 12.5, height: 1.5)),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _copyFaultLogs() async {

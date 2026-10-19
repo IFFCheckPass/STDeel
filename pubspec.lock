@@ -1313,18 +1313,18 @@ packages:
     dependency: transitive
     description:
       name: val_highlight
-      sha256: cad3d16fb04f30f608d2216d4a4ef9a6df43e9e2f17e0905716d58198532b92f
+      sha256: dbb36108dfc96aa09f544dc25dc769be0a60fa1c420a53bf23fadfafd7707049
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "0.1.0"
+    version: "0.1.1"
   val_highlight_flutter:
     dependency: transitive
     description:
       name: val_highlight_flutter
-      sha256: "132f1f4e658b4275cea92fb68358b83e0371e2e01d99bd5ae243d05eef0f4cf5"
+      sha256: "8a8cce45cda40034e9c5c8dcebed717e1c5481d19a4e1e0f777c046ad4526287"
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "0.1.0"
+    version: "0.1.1"
   val_latex:
     dependency: transitive
     description:
