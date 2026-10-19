@@ -623,3 +623,41 @@ rm -f android/upload-keystore.jks android/key.properties
   `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.7.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.7
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.8（✅ 双端构建并发布，小版本修复：0.9.7 → c 位 +1，T0 数据完整性专项）
+- **版本**：`pubspec.yaml version: 0.9.8+35`；`settings_screen.dart` 角标 `v0.9.8`。
+- **用户实况（T0 级）**：0.9.7 覆盖安装后模型配置/账号绑定丢失；历史记录仍在；导入报错但实际导入成功；
+  大退重进后 API 信息全没。
+- **全链路排查结论**：
+  - 数据库（schema v7）、prefs key、applicationId、数据库文件名全程未变——SQLite（历史记录）
+    持久化正常印证了这一点；
+  - "导入报错但实际导入成功"：旧导入逻辑 solve/knowledge 逐条**先写入**、AI 配置恢复在中途抛错时
+    被外层笼统 catch 成"导入失败"，且 AI 配置从未写入 → **记录看似"丢了"（云端 user_id 未重绑 +
+    模型配置未恢复）**，而大退后 UI 上自然全空；
+  - 模型配置被覆盖的高危路径：`SettingsProvider.load()` 对无法识别的 JSON 静默 `defaultAiProviders()`，
+    任何后续保存都会把默认模板持久化覆盖。
+- **修复（对应 AGENTS.md 新增「数据完整性强制规则（T0 级）」）**：
+  1. **启动强制核查**（新 `data_integrity_service.dart`，挂 `SettingsProvider.load()` 尾部，每次启动必跑）：
+     快照关键 prefs（模型配置/username/device_id/user_id → `integrity_snapshot_json`，旧快照转 prev）
+     → SQLite 各表可读+行数、模型配置可解析非空、账号一致性核查 → 自愈（username 有但 user_id 缺失时
+     自动按 username 重绑云端账号，找回云端记录归属）→ 结果写 FaultLog 并在设置页「存储与缓存」可见。
+  2. **模型配置防覆盖**：`load()` 对无法识别 JSON 先 salvage（任意结构抠取 provider/combo），
+     失败留底 `ai_combos_json_corrupt` 再内存降级（绝不覆盖原值）；`_persist()` 覆盖写之前自动留底
+     `ai_combos_json_prev`。
+  3. **备份 v3 + 导入重构**（`backup_service.dart`）：
+     - v3 备份新增 `username`（账号绑定）；导出带 providers（含 API Key）+ username；
+     - 导入 **AI 配置恢复最优先**（先于任何记录写入）、**逐条容错**（单条失败进 warnings 明细，
+       绝不笼统报"导入失败"）、**宽容格式**（v1/v2/v3、缺 type 但含已知字段、顶层裸 providers 数组、
+       BOM、不强制 .json 扩展名均可）；
+     - 导入后 `setUsername`（内部按 username 重绑 user_id）恢复云端记录归属；
+     - UI：导入结果精确分类展示（记录/知识点/AI 配置组数/账号），警告明细弹窗列出。
+  4. **AGENTS.md** 固化「数据完整性强制规则（T0 级，不可协商）」：持久化结构即契约、禁 drop 表、
+     禁静默重置、覆盖前必留底、启动强制核查、备份必含模型配置与账号、发版前覆盖安装自测。
+- **验证**：`flutter analyze` 0 error/0 warning、`flutter test` 全绿。
+- **发布（双端）**：`gh release create v0.9.8 --prerelease` 上传 `app-0.9.8.apk`；
+  `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.8.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.8
+- **数据恢复指引**：在 Windows 电脑上用 0.9.0+ 导出过备份的用户，升级 0.9.8 后在
+  「设置 → 存储与缓存 → 导入恢复」选择备份文件即可一次性恢复：AI 模型 API 配置、账号绑定（自动重绑
+  云端账号、找回云端记录）、解题记录、知识点。旧版（v1）备份仅含记录与知识点，AI 配置需手动重填。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

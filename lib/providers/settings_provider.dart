@@ -14,8 +14,11 @@ import 'package:flutter/material.dart';
 
 import '../config/ai_config.dart';
 import '../config/app_config.dart';
+import '../data/database.dart';
 import '../models/ai_provider.dart';
 import '../services/backend_api.dart';
+import '../services/data_integrity_service.dart';
+import '../services/fault_log_service.dart';
 
 class SettingsProvider extends ChangeNotifier {
   SettingsProvider({required BackendApi backendApi}) : _api = backendApi;
@@ -67,37 +70,107 @@ class SettingsProvider extends ChangeNotifier {
     _username = await _api.getUsername();
     _themeMode = _parseThemeMode(await _api.getThemeMode());
     final raw = await _api.getAiCombosJson();
+    _providers = _parseProvidersRaw(raw);
+    _loaded = true;
+    notifyListeners();
+    if (_username != null && _username!.isNotEmpty) {
+      unawaited(_syncAccountApiKeys());
+    }
+    // 数据完整性强制核查（每次启动必须执行，见 AGENTS.md「数据完整性强制规则」）：
+    // 快照关键数据 → SQLite/模型配置/账号核查 → 自愈（账号重绑等）。
+    // fire-and-forget：核查不阻塞首屏，结果写 FaultLog 供设置页查看。
+    unawaited(
+      DataIntegrityService(db: AppDatabase.instance, api: _api).run(),
+    );
+  }
+
+  /// 解析模型配置原始 JSON（启动与启动核查共用）。
+  ///
+  /// 数据完整性强制规则（T0）：**绝不静默重置**。
+  /// - 可识别（新 provider 结构 / 旧 AiCombo 结构 / 任意可抠出的模型信息）→ 恢复；
+  /// - 无法识别 → 把原始 JSON 留底到 [AppConfig.keyAiCombosCorrupt] 供找回，
+  ///   然后才用默认模板跑（仅内存层，不覆盖原 raw）。
+  List<AiProvider> _parseProvidersRaw(String? raw) {
     if (raw != null && raw.isNotEmpty) {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is List && decoded.isNotEmpty) {
           // 新结构：List<AiProvider>
           if (decoded.every((e) =>
-              (e as Map).containsKey('baseUrl') && (e).containsKey('models'))) {
-            _providers = decoded
+              e is Map &&
+              e.containsKey('baseUrl') &&
+              e.containsKey('models'))) {
+            return decoded
                 .map((e) => AiProvider.fromJson(e as Map<String, dynamic>))
                 .toList();
-          } else if (decoded.first is Map &&
-              (decoded.first as Map).containsKey('modelId')) {
-            // 旧结构：List<AiCombo> → 迁移为单模型供应商
-            _providers = _migrateFromCombos(decoded.cast<Map>());
-          } else {
-            _providers = defaultAiProviders();
           }
-        } else {
-          _providers = defaultAiProviders();
+          // 旧结构：List<AiCombo> → 迁移为单模型供应商
+          if (decoded.first is Map &&
+              (decoded.first as Map).containsKey('modelId')) {
+            return _migrateFromCombos(decoded.cast<Map>());
+          }
+          // 无法识别的列表：尝试 salvage，失败则留底
+          final salvaged = _salvageProviders(decoded);
+          if (salvaged.isNotEmpty) return salvaged;
+        } else if (decoded is Map) {
+          // 单对象包裹（如 {"providers": [...]}）也尝试 salvage
+          final salvaged = _salvageProviders(decoded);
+          if (salvaged.isNotEmpty) return salvaged;
         }
-      } catch (_) {
-        _providers = defaultAiProviders();
+        _snapshotCorrupt(raw, '无法识别的结构');
+      } catch (e) {
+        _snapshotCorrupt(raw, '解析异常: $e');
       }
-    } else {
-      _providers = defaultAiProviders();
     }
-    _loaded = true;
-    notifyListeners();
-    if (_username != null && _username!.isNotEmpty) {
-      unawaited(_syncAccountApiKeys());
-    }
+    return defaultAiProviders();
+  }
+
+  /// 从任意形状的 JSON 里尽力抠出模型/供应商信息（数据 salvage）。
+  List<AiProvider> _salvageProviders(dynamic decoded) {
+    final out = <AiProvider>[];
+    try {
+      final List items;
+      if (decoded is List) {
+        items = decoded;
+      } else if (decoded is Map) {
+        items = (decoded['providers'] ??
+                decoded['ai_providers'] ??
+                decoded['models'] ??
+                const []) as List;
+      } else {
+        return out;
+      }
+      for (final e in items) {
+        if (e is! Map) continue;
+        // provider 形状：含 models
+        if (e.containsKey('models')) {
+          out.add(AiProvider.fromJson(Map<String, dynamic>.from(e)));
+          continue;
+        }
+        // 旧 AiCombo 形状：modelId + baseUrl
+        if (e.containsKey('modelId') || e.containsKey('baseUrl')) {
+          out.addAll(_migrateFromCombos([e]));
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  /// 腐损原始 JSON 留底（不覆盖已有留底，保留最早一份）
+  Future<void> _snapshotCorrupt(String raw, String reason) async {
+    try {
+      final existing = await _api.getPrefsString(AppConfig.keyAiCombosCorrupt);
+      if (existing == null || existing.isEmpty) {
+        await _api.setPrefsString(AppConfig.keyAiCombosCorrupt, raw);
+      }
+      FaultLogService.instance.record(
+        source: '数据完整性核查',
+        code: '配置',
+        summary: '模型配置 JSON 无法识别，已留底待找回',
+        detail: '原因：$reason\n原始内容前 500 字符：\n'
+            '${raw.length > 500 ? '${raw.substring(0, 500)}…' : raw}',
+      );
+    } catch (_) {}
   }
 
   /// 迁移旧版扁平组合（AiCombo）为「单模型供应商」
@@ -131,6 +204,14 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> _persist() async {
+    // 数据完整性防呆：覆盖写之前，把当前已持久化的原始 JSON 留底一份，
+    // 任何误覆盖（导入异常/默认模板覆盖）都可从 prev 找回。
+    try {
+      final current = await _api.getAiCombosJson();
+      if (current != null && current.isNotEmpty) {
+        await _api.setPrefsString(AppConfig.keyAiCombosPrev, current);
+      }
+    } catch (_) {/* 留底失败不阻塞写入 */}
     await _api.setAiCombosJson(
       jsonEncode(_providers.map((p) => p.toJson()).toList()),
     );
