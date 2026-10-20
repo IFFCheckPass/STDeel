@@ -18,6 +18,33 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# ---------- 0. 确保 JDK 17 ----------
+# 默认 JDK（可能是 25）会导致 Kotlin 编译守护进程挂起，需 JDK 17。
+# 动态解析：优先环境里可用的 17，否则在常见安装目录（mise/sdkman/usr/lib）中查找。
+# 严禁在 android/gradle.properties 硬编码绝对路径（跨环境会失效）。
+pick_jdk17() {
+  # 若当前 JAVA_HOME 已是 17，直接用
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    case "$("$JAVA_HOME/bin/java" -version 2>&1 | head -1)" in
+      *'"17.'*|*'openjdk version "17'*) echo "$JAVA_HOME"; return 0 ;;
+    esac
+  fi
+  for base in /root/.local/share/mise/installs/java /usr/lib/jvm \
+              "$HOME/.sdkman/candidates/java" /opt/java; do
+    [ -d "$base" ] || continue
+    for d in "$base"/*17*; do
+      if [ -x "$d/bin/java" ]; then echo "$d"; return 0; fi
+    done
+  done
+  return 1
+}
+if JDK17="$(pick_jdk17)"; then
+  export JAVA_HOME="$JDK17"
+  echo "==> 使用 JDK17: $JAVA_HOME"
+else
+  echo "!! 未找到 JDK 17，将使用默认 JDK（可能导致 Kotlin 编译挂起）"
+fi
+
 # 环境变量
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"

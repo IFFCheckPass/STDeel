@@ -115,3 +115,25 @@ class PendingDeletes extends Table {
   DateTimeColumn get createdAt =>
       dateTime().withDefault(currentDateAndTime)();
 }
+
+/// 应用设置键值表（v0.9.9 新增，数据完整性关键）
+///
+/// **为何不用 SharedPreferences**：其官方文档明确声明"不保证写入落盘、
+/// 不得用于关键数据"（`must not be used for storing critical data`），
+/// 且 v0.9.x 实测出现过插件 API 不匹配（NoSuchMethodError）导致 prefs 整体
+/// 读写失效、大退后模型配置/账号绑定丢失的 T0 事故。
+/// 因此把全部关键设置（模型配置含 API Key、账号绑定、后端 URL、主题、超时、
+/// 故障日志、完整性快照）统一持久化到本表——SQLite 事务写入有落盘保证。
+///
+/// 兼容：首次启动若本表为空而旧的 SharedPreferences 有数据，会自动迁移过来。
+@DataClassName('AppSettingEntity')
+class AppSettings extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+  DateTimeColumn get updatedAt =>
+      dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}
+

@@ -17,18 +17,29 @@ library;
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../models/ai_provider.dart' show normalizeBaseUrl;
+import 'key_value_store.dart';
 
 class BackendApi {
-  BackendApi({Dio? dio, SharedPreferences? prefs})
-      : _dio = dio ?? Dio(),
-        _prefsCache = prefs;
+  BackendApi({Dio? dio}) : _dio = dio ?? Dio();
 
   final Dio _dio;
-  SharedPreferences? _prefsCache;
+
+  /// 关键设置的可靠持久化（SQLite，v0.9.9）。
+  ///
+  /// v0.9.9 起不再使用 SharedPreferences：其官方文档明确"不保证写入落盘、
+  /// 不得用于关键数据"，且实测因插件 API 不匹配（NoSuchMethodError）导致
+  /// 整体读写失效 → 模型配置/账号绑定丢失。SQLite 事务写入有落盘保证。
+  KeyValueStore get _kv => KeyValueStore.instance;
+
+  Future<String?> _get(String key) => _kv.getString(key);
+  Future<void> _set(String key, String value) => _kv.setString(key, value);
+  Future<bool?> _getBool(String key) => _kv.getBool(key);
+  Future<void> _setBool(String key, bool v) => _kv.setBool(key, v);
+  Future<int?> _getInt(String key) => _kv.getInt(key);
+  Future<void> _setInt(String key, int v) => _kv.setInt(key, v);
 
   /// 后端 URL：公网 / 内网双通道。
   ///
@@ -42,14 +53,11 @@ class BackendApi {
   /// 公网地址允许为空（配合仅内网使用的场景）：优先取所选通道，若所选通道为空
   /// 则回退另一通道，两者皆空才回退默认公网地址。
   Future<String> _baseUrl() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-
     // 是否启用公网
-    final usePublic =
-        _prefsCache!.getBool(AppConfig.keyBackendUsePublic) ?? true;
+    final usePublic = await _getBool(AppConfig.keyBackendUsePublic) ?? true;
 
-    final public = _prefsCache!.getString(AppConfig.keyBackendUrl) ?? '';
-    final intra = _prefsCache!.getString(AppConfig.keyBackendUrlIntranet) ?? '';
+    final public = await _get(AppConfig.keyBackendUrl) ?? '';
+    final intra = await _get(AppConfig.keyBackendUrlIntranet) ?? '';
 
     String active;
     if (usePublic) {
@@ -69,49 +77,35 @@ class BackendApi {
 
   /// 读取公网后端 URL（可能为空——允许仅内网场景；不再强加默认值）
   Future<String> getBackendUrlPublic() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    final v = _prefsCache!.getString(AppConfig.keyBackendUrl);
+    final v = await _get(AppConfig.keyBackendUrl);
     if (v == null || v.trim().isEmpty) return '';
     return normalizeBaseUrl(v);
   }
 
   Future<void> setBackendUrlPublic(String url) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(
-      AppConfig.keyBackendUrl,
-      normalizeBaseUrl(url),
-    );
+    await _set(AppConfig.keyBackendUrl, normalizeBaseUrl(url));
   }
 
   /// 读取内网后端 URL（可能为空 / 未配置）
   Future<String?> getBackendUrlIntranet() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    final v = _prefsCache!.getString(AppConfig.keyBackendUrlIntranet);
+    final v = await _get(AppConfig.keyBackendUrlIntranet);
     if (v == null || v.trim().isEmpty) return null;
     return normalizeBaseUrl(v);
   }
 
   Future<void> setBackendUrlIntranet(String url) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(
-      AppConfig.keyBackendUrlIntranet,
-      normalizeBaseUrl(url),
-    );
+    await _set(AppConfig.keyBackendUrlIntranet, normalizeBaseUrl(url));
   }
 
-  Future<bool> getUsePublicBackend() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getBool(AppConfig.keyBackendUsePublic) ?? true;
-  }
+  Future<bool> getUsePublicBackend() async =>
+      await _getBool(AppConfig.keyBackendUsePublic) ?? true;
 
   Future<void> setUsePublicBackend(bool usePublic) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setBool(AppConfig.keyBackendUsePublic, usePublic);
+    await _setBool(AppConfig.keyBackendUsePublic, usePublic);
   }
 
   Future<String> _userId() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    var id = _prefsCache!.getString(AppConfig.keyUserId);
+    var id = await _get(AppConfig.keyUserId);
     if (id == null) {
       // 首次启动自动注册
       id = await registerUser();
@@ -121,52 +115,37 @@ class BackendApi {
 
   /// 设置新的后端 URL（用于设置页）
   Future<void> setBackendUrl(String url) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(AppConfig.keyBackendUrl, url);
+    await _set(AppConfig.keyBackendUrl, url);
   }
 
   /// AI 组合列表（JSON 数组持久化）
-  Future<String?> getAiCombosJson() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getString(AppConfig.keyAiCombos);
-  }
+  Future<String?> getAiCombosJson() => _get(AppConfig.keyAiCombos);
 
   Future<void> setAiCombosJson(String json) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(AppConfig.keyAiCombos, json);
+    await _set(AppConfig.keyAiCombos, json);
   }
 
-  /// 通用 prefs 字符串读写（数据完整性快照/腐损留底用）
-  Future<String?> getPrefsString(String key) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getString(key);
-  }
+  /// 通用字符串读写（数据完整性快照/腐损留底用）
+  Future<String?> getPrefsString(String key) => _get(key);
 
   Future<void> setPrefsString(String key, String value) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(key, value);
+    await _set(key, value);
   }
 
-  Future<int> getThinkTimeoutSeconds() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getInt(AppConfig.keyThinkTimeoutSeconds) ??
-        AppConfig.defaultThinkTimeoutSeconds;
-  }
+  Future<int> getThinkTimeoutSeconds() async =>
+      await _getInt(AppConfig.keyThinkTimeoutSeconds) ??
+      AppConfig.defaultThinkTimeoutSeconds;
 
   Future<void> setThinkTimeoutSeconds(int seconds) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setInt(AppConfig.keyThinkTimeoutSeconds, seconds);
+    await _setInt(AppConfig.keyThinkTimeoutSeconds, seconds);
   }
 
   /// 主题模式（system | light | dark）持久化
-  Future<String> getThemeMode() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getString(AppConfig.keyThemeMode) ?? 'system';
-  }
+  Future<String> getThemeMode() async =>
+      await _get(AppConfig.keyThemeMode) ?? 'system';
 
   Future<void> setThemeMode(String mode) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(AppConfig.keyThemeMode, mode);
+    await _set(AppConfig.keyThemeMode, mode);
   }
 
   Future<String> getBackendUrl() async => _baseUrl();
@@ -187,8 +166,7 @@ class BackendApi {
       if (id == null || id.isEmpty) {
         throw BackendApiException('用户注册失败：响应缺少 user_id');
       }
-      _prefsCache ??= await SharedPreferences.getInstance();
-      await _prefsCache!.setString(AppConfig.keyUserId, id);
+      await _set(AppConfig.keyUserId, id);
       return id;
     } on DioException catch (e) {
       throw BackendApiException('用户注册失败: ${e.message}');
@@ -202,27 +180,19 @@ class BackendApi {
   // 控制（默认关闭隐藏），待适配完成后再开放 UI，避免数据污染。
 
   /// 读取本地持久化的 username（可能为空）
-  Future<String?> getUsername() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getString(AppConfig.keyUsername);
-  }
+  Future<String?> getUsername() => _get(AppConfig.keyUsername);
 
   /// 本地持久化 username
   Future<void> setUsername(String username) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(AppConfig.keyUsername, username.trim());
+    await _set(AppConfig.keyUsername, username.trim());
   }
 
   /// 读取本地持久化的用户 api-key（用于跨端同步，尚未对接后端）
-  Future<String?> getUserApiKey() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    return _prefsCache!.getString(AppConfig.keyUserApiKey);
-  }
+  Future<String?> getUserApiKey() => _get(AppConfig.keyUserApiKey);
 
   /// 本地持久化用户 api-key
   Future<void> setUserApiKey(String apiKey) async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    await _prefsCache!.setString(AppConfig.keyUserApiKey, apiKey.trim());
+    await _set(AppConfig.keyUserApiKey, apiKey.trim());
   }
 
   /// 按 username 获取后端 user_id（后端「仅传 username → 按 username 找或创建」）。
@@ -243,8 +213,7 @@ class BackendApi {
       final id =
           (data is Map ? (data['user_id'] ?? data['id']) : null)?.toString();
       if (id == null || id.isEmpty) return false;
-      _prefsCache ??= await SharedPreferences.getInstance();
-      await _prefsCache!.setString(AppConfig.keyUserId, id);
+      await _set(AppConfig.keyUserId, id);
       return true;
     } on DioException {
       return false;
@@ -479,11 +448,10 @@ class BackendApi {
   /// 之后再注册会返回同一个 user_id。因此该值必须在卸载重装间保持稳定，
   /// 否则会反复创建新用户。首次调用生成 UUID v4 并持久化，之后始终复用。
   Future<String> _deviceId() async {
-    _prefsCache ??= await SharedPreferences.getInstance();
-    var id = _prefsCache!.getString(AppConfig.keyDeviceId);
+    var id = await _get(AppConfig.keyDeviceId);
     if (id == null || id.isEmpty) {
       id = _generateUuid4();
-      await _prefsCache!.setString(AppConfig.keyDeviceId, id);
+      await _set(AppConfig.keyDeviceId, id);
     }
     return id;
   }
