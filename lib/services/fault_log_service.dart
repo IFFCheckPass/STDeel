@@ -8,9 +8,9 @@ library;
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
+import 'key_value_store.dart';
 
 /// 单条故障记录
 class FaultLog {
@@ -89,7 +89,6 @@ class FaultLogService extends ChangeNotifier {
 
   List<FaultLog> _logs = [];
   bool _loaded = false;
-  SharedPreferences? _prefs;
 
   /// 最新在前
   List<FaultLog> get logs => List.unmodifiable(_logs);
@@ -98,8 +97,8 @@ class FaultLogService extends ChangeNotifier {
 
   /// 预热：读取持久化的记录。AppProviders 启动时调用一次。
   Future<void> load() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final raw = _prefs!.getString(AppConfig.keyFaultLogs);
+    // v0.9.9：改用 SQLite 键值存储（SharedPreferences 不保证落盘）
+    final raw = await KeyValueStore.instance.getString(AppConfig.keyFaultLogs);
     if (raw != null && raw.isNotEmpty) {
       try {
         final arr = jsonDecode(raw) as List<dynamic>;
@@ -146,9 +145,10 @@ class FaultLogService extends ChangeNotifier {
   }
 
   Future<void> _persist() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!
-        .setString(AppConfig.keyFaultLogs, jsonEncode(_logs.map((e) => e.toJson()).toList()));
+    await KeyValueStore.instance.setString(
+      AppConfig.keyFaultLogs,
+      jsonEncode(_logs.map((e) => e.toJson()).toList()),
+    );
   }
 }
 

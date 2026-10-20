@@ -10,6 +10,12 @@
 > 最高优先级资产，任何代码改动都不得以任何形式破坏其完整性。
 
 ### 持久化结构稳定性
+- **关键数据一律使用 SQLite（drift `app_settings` 键值表 / `KeyValueStore`），严禁使用
+  SharedPreferences**：其官方文档明确"不保证写入落盘，must not be used for storing
+  critical data"，且实测因插件 API 不匹配（`NoSuchMethodError ...Registrar.getAll`）
+  导致整体读写失效 → 模型配置/账号绑定丢失。SharedPreferences 仅允许用于**一次性迁移读取**。
+- **SettingsProvider 等任何写入关键数据的路径必须走 `KeyValueStore`（写入后回读校验）**，
+  失败必须抛出并让 UI 明确提示，严禁静默失败。
 - **SharedPreferences key、drift 表结构、数据库文件名一经发布即为契约**：
   严禁改名、迁移存储位置、变更序列化格式；确需变更时必须同时提供对全部历史
   格式的读取兼容 + 自动迁移，并写入 `docs/BUILD.md`。

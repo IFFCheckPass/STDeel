@@ -359,8 +359,20 @@ class _ProviderEditScreenState extends State<ProviderEditScreen> {
       showGlassSnackBar(context, 'Base URL 不能为空', error: true);
       return;
     }
+    if (provider.models.isEmpty) {
+      // 允许无模型保存（用户可能稍后补），仅提示，不阻断
+      showGlassSnackBar(context, '提示：该供应商暂无模型，可稍后在模型页添加', success: false);
+    }
     final s = context.read<SettingsProvider>();
-    await s.saveProvider(provider);
+    try {
+      // v0.9.9：持久化改为 SQLite 且写入后回读校验；任何失败都会抛出，
+      // 这里显式捕获并提示，杜绝"点了保存却无声失败"的观感。
+      await s.saveProvider(provider);
+    } catch (e) {
+      if (!mounted) return;
+      showGlassSnackBar(context, '保存失败：$e', error: true);
+      return;
+    }
     if (!mounted) return;
     showGlassSnackBar(context, '供应商「${provider.name}」已保存', success: true);
     Navigator.of(context).pop();

@@ -661,3 +661,38 @@ rm -f android/upload-keystore.jks android/key.properties
   「设置 → 存储与缓存 → 导入恢复」选择备份文件即可一次性恢复：AI 模型 API 配置、账号绑定（自动重绑
   云端账号、找回云端记录）、解题记录、知识点。旧版（v1）备份仅含记录与知识点，AI 配置需手动重填。
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.9（✅ 双端构建并发布，小版本修复：0.9.8 → c 位 +1，"无法保存供应商" + 关键设置迁 SQLite）
+- **版本**：`pubspec.yaml version: 0.9.9+36`；`settings_screen.dart` 角标 `v0.9.9`。
+- **用户实况**：0.9.8 无法保存供应商；此前已反馈"大退后 API 信息全没、导入报错但实际成功"。
+- **根因（与 T0 数据丢失同源，本次彻底定位）**：
+  1. **SharedPreferences 官方文档明确声明"不保证写入落盘、must not be used for storing
+     critical data"**，而此前模型配置/账号绑定/后端设置全部存放在 prefs；
+  2. 用户截图 `java.lang.NoSuchMethodError: ...SharedPreferencesApi$Registrar.getAll(...)`
+     证明该插件在真机 release 包中**整体调用失败** → prefs 读写全废：
+     保存＝没写进去（表现为"无法保存供应商"），大退后读不到（表现为"配置全丢"）；
+  3. 历史记录在 SQLite 中，故始终完好 —— 与"记录还在、API 信息没了"现象完全吻合。
+- **修复（关键设置迁 SQLite，数据完整性根治）**：
+  - 新增 drift `app_settings` 键值表（`lib/data/tables.dart`，schemaVersion 7→8，
+    `onUpgrade` 仅 `create` 不重建）；新增 `AppSettingsDao`；
+  - 新增 `lib/services/key_value_store.dart`：**写入用事务 + 回读校验**，校验不符即抛错，
+    从根上杜绝"看似保存成功、大退后丢失"；
+  - `BackendApi`、`FaultLogService` 全部改走 `KeyValueStore`（不再依赖 prefs）；
+  - **一次性迁移**：首次启动若 `app_settings` 为空而旧 prefs 有数据，自动搬运全部已知 key
+    （模型配置/账号/后端 URL/主题/超时/故障日志/完整性快照），老版本用户数据不丢；
+  - `main()` 在 `runApp` 前 `KeyValueStore.ensureReady()`，保证任何读取前已就绪；
+  - `provider_edit_screen` 保存增加 try/catch + 明确失败提示 + 空模型提醒。
+- **AGENTS.md 更新**：新增强制条款——关键数据一律使用 SQLite（`KeyValueStore`），
+  **严禁使用 SharedPreferences**（仅允许一次性迁移读取）；写入失败必须抛出并让 UI 提示。
+- **⚠️ 构建踩坑（本次）**：编辑 `tables.dart` 时误删 `PendingDeletes` 表 →
+  drift 生成器整体降级为空壳（`database.g.dart` 仅 30 行、`allSchemaEntities => []`）→
+  analyze 报数百条 undefined。**判据：`database.g.dart` 行数骤减 / `allSchemaEntities => []`
+  即表示生成失败**；补回表定义后重跑 build_runner 恢复（3653 行）。
+- **验证**：`flutter analyze` 0 error/0 warning、`flutter test` 全绿。
+- **新增交付**：`docs/REQUIREMENTS-CHECKLIST.md`（全量需求清单 + 逐条实现核对，含两条待裁决冲突项）。
+- **发布（双端）**：`gh release create v0.9.9 --prerelease` 上传 `app-0.9.9.apk`；
+  `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.9.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.9
+- **数据兼容性结论**：老用户（≤0.9.8）覆盖安装 0.9.9 后，关键设置由启动时自动从 prefs 迁移
+  至 SQLite，模型配置/账号绑定**不再丢失**；drift v7→v8 仅新增空表，历史记录/知识点/答案库不受影响。
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

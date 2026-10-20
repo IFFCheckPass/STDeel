@@ -14,6 +14,7 @@ import 'package:sqlite3_flutter_libs/sqlite3_flutter_libs.dart';
 
 import 'daos/answer_library_dao.dart';
 import 'daos/answer_paper_dao.dart';
+import 'daos/app_settings_dao.dart';
 import 'daos/knowledge_dao.dart';
 import 'daos/pending_delete_dao.dart';
 import 'daos/solve_record_dao.dart';
@@ -28,6 +29,7 @@ part 'database.g.dart';
     AnswerPapers,
     KnowledgeMastery,
     PendingDeletes,
+    AppSettings,
   ],
   daos: [
     SolveRecordDao,
@@ -35,6 +37,7 @@ part 'database.g.dart';
     AnswerPaperDao,
     KnowledgeDao,
     PendingDeleteDao,
+    AppSettingsDao,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -45,7 +48,7 @@ class AppDatabase extends _$AppDatabase {
   static AppDatabase get instance => _instance ??= AppDatabase._();
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -107,6 +110,13 @@ class AppDatabase extends _$AppDatabase {
               'CREATE INDEX IF NOT EXISTS idx_ans_paper_no '
               'ON answer_library(paper_id, question_no)',
             );
+          }
+          // v7 -> v8：关键设置迁入 SQLite（应用设置键值表；数据完整性关键，
+          // 替代不保证落盘的 SharedPreferences）。表已存在时忽略。
+          if (from < 8) {
+            try {
+              await m.create(appSettings);
+            } catch (_) {/* 表已存在（异常重试路径）时忽略 */}
           }
         },
       );
