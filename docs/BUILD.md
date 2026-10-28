@@ -725,6 +725,10 @@ rm -f android/upload-keystore.jks android/key.properties
   - Maven Central 429：`~/.gradle/init.gradle` 追加 `settings.dependencyResolutionManagement.repositories`
     镜像（仅追加、不清空），修复 includeBuild `flutter_tools/gradle`（`FAIL_ON_PROJECT_REPOS`）
     解析 `kotlin-stdlib` 时的 429。
+  - 沙箱 `/opt` 会被不定期重置 → Flutter/Android SDK 丢失、构建"卡住"或报 `command not found`。
+    解决：工具链改放**仓库内持久目录** `/workspace/.toolchain/{flutter,android}`（已加入 `.gitignore`，
+    不随代码提交），`scripts/build-release.sh` 优先探测该目录，缺失时自动安装到该目录；
+    此后覆盖安装 / 重建均无需重新下载 SDK。
 - **验证**：`flutter analyze` 0 error/0 warning、`flutter test` 全绿。
 - **发布（双端）**：`gh release create v0.9.10 --prerelease`（<1.0.0 → Pre-Release）上传 `app-0.9.10.apk`；
   `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.10.exe` 同 tag。
