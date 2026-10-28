@@ -452,7 +452,8 @@ class _KnowledgeScreenState extends State<KnowledgeScreen> {
 
   Future<void> _showRelatedWrong(BuildContext context, String kp) async {
     final db = context.read<AppDatabase>();
-    final records = await db.solveRecordDao.getByFeedback('wrong');
+    final records =
+        await db.solveRecordDao.getByFeedbackAny(const ['wrong', 'partial']);
     if (!context.mounted) return;
     final related =
         records.where((r) => r.knowledgePoints.contains('"$kp"')).toList();

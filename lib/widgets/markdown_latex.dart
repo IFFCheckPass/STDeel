@@ -427,6 +427,9 @@ String latexToUnicode(String input) {
     final simpleA = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(a);
     final simpleB = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(b);
     if (simpleA && simpleB) return '$a/$b';
+    // 只给"复杂"的一侧加括号，保持可读性（如 (a+b)/2 而非 (a+b)/(2)）
+    if (simpleA && !simpleB) return '$a/($b)';
+    if (!simpleA && simpleB) return '($a)/$b';
     return '($a)/($b)';
   });
 

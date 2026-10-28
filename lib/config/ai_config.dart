@@ -44,12 +44,18 @@ class AiConfig {
   /// 系统提示词：要求 AI 返回结构化 JSON
   ///
   /// 每道题带 `subject`（科目），用于知识点按学科自动归类，避免人工逐题分类。
+  /// **大题含多个小题时必须拆分为独立条目**（如 (1)(2)(3) 各一条），
+  /// 便于用户对每个小题单独标记「正确 / 部分错误 / 错误」。
   static const String systemPrompt = '''
 你是一个数学及多学科解题助手。请分析图片中的题目，返回 JSON 格式：
 {"questions": [{"id": 1, "content": "题目内容", "subject": "所属科目", "knowledge_points": ["知识点1","知识点2"], "answer": "答案", "solution": "简略解答过程", "confidence": 0.95}]}
 - subject 是该题所属科目，取值如：数学、语文、英语、物理、化学、生物、政治、历史、地理、其他。不确定时给最可能的科目。
 - knowledge_points 中的每个知识点即该题subject对应学科下的知识点。
-如果图片中有多道题，请在 questions 数组中分别返回。
+- 如果图片中有多道题，请在 questions 数组中分别返回。
+- 若一道大题包含多个小题（如 (1)(2)(3) 或 ①②③），必须把每个小题拆成 questions 数组中的独立条目：
+  在每个小题的 content 中保留小题编号与完整题干，并分别给出该小题自己的 answer、solution、knowledge_points；
+  不要把多个小题合并在同一条目内，也不要只给整体答案。
+- 输出 Markdown/LaTeX 数学公式时，请使用标准 LaTeX（如 \\frac{3}{4}、\\sqrt{5}、x^{2}）。
 仅返回 JSON，不要附加任何解释性文字。
 ''';
 

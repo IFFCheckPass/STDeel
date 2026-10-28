@@ -696,3 +696,37 @@ rm -f android/upload-keystore.jks android/key.properties
 - **数据兼容性结论**：老用户（≤0.9.8）覆盖安装 0.9.9 后，关键设置由启动时自动从 prefs 迁移
   至 SQLite，模型配置/账号绑定**不再丢失**；drift v7→v8 仅新增空表，历史记录/知识点/答案库不受影响。
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.10（✅ 双端构建并发布，小版本：0.9.9 → c 位 +1，Markdown/LaTeX 渲染 + 部分错误）
+- **版本**：`pubspec.yaml version: 0.9.10+37`；`settings_screen.dart` 角标 `v0.9.10`。
+- **用户反馈**：AI 输出 `\frac{3}{4}`、`\sqrt{5}` 等 LaTeX 时软件不解析，答案显示为原始代码，难以阅读。
+- **根因**：`LatexRenderer` 仅用 `SelectableText` 纯文本渲染，从未解析 LaTeX/Markdown。
+  历史上曾用 flutter_tex（WebView）渲染，但在受限布局中常白屏，故退化为纯文本。
+- **修复（新增 `lib/widgets/markdown_latex.dart`，纯 Dart 渲染，无崩溃风险）**：
+  - 行内/块级 Markdown：标题、有序/无序列表、引用、代码块、分隔线、粗体/斜体/行内代码/删除线/链接；
+  - LaTeX 识别：`$...$`、`$$...$$`、`\(...\)`、`\[...\]`，以及**裸命令**（AI 常不加 `$`）；
+  - LaTeX → Unicode：`\frac{a+b}{2}` → `(a+b)/2`、`\sqrt{5}` → `√(5)`、`x^{2}` → `x²`、
+    `\le`→`≤`、`\times`→`×`、希腊字母/箭头/集合符号等完整映射；未知命令安全降级为可读文本；
+  - `LatexRenderer` 改为委托该组件，解题页/历史页/知识点页答案区全部自动生效；
+  - 新增单元测试 8 条（分数/根号/上下标/运算符/定界符/普通文本不误伤），`flutter test` 全绿。
+- **新增「部分错误」反馈（橙色 `#FF9F43`）**：
+  - `AnswerCard` 左侧新增第 5 个按钮「部分错误」，`SolveProvider.markPartial()` 写入
+    `userFeedback/actionType = partial`，知识点按「半掌握」累计（correct +1、wrong +1）；
+  - 历史页新增「部分」按钮与橙色状态标记；错题复习查询包含 `wrong + partial`
+    （`SolveRecordDao.getByFeedbackAny`）；云同步回写兼容 partial。
+- **AI 拆分小题**：`AiConfig.systemPrompt` 明确要求——大题含多个小题（(1)(2)(3)/①②③）时，
+  必须拆成 `questions` 数组中的独立条目，每个小题单独给出 content/answer/solution/knowledge_points；
+  并要求数学公式使用标准 LaTeX（`\frac`、`\sqrt`、`x^{2}`）。便于逐小题标记正确/部分错误/错误。
+- **本次构建踩坑（环境）**：
+  - `flutter pub get` 长时间停在 `Downloading packages...`（本机构建网络访问 pub.dev 无响应）；
+    解决：`scripts/build-release.sh` 默认改为 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、
+    `FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter`（CI 可用同名变量覆盖回官方源）。
+    提交前把 `pubspec.lock` 中镜像 URL 还原为 `https://pub.dev`（内容哈希一致）。
+  - Maven Central 429：`~/.gradle/init.gradle` 追加 `settings.dependencyResolutionManagement.repositories`
+    镜像（仅追加、不清空），修复 includeBuild `flutter_tools/gradle`（`FAIL_ON_PROJECT_REPOS`）
+    解析 `kotlin-stdlib` 时的 429。
+- **验证**：`flutter analyze` 0 error/0 warning、`flutter test` 全绿。
+- **发布（双端）**：`gh release create v0.9.10 --prerelease`（<1.0.0 → Pre-Release）上传 `app-0.9.10.apk`；
+  `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.10.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.10
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

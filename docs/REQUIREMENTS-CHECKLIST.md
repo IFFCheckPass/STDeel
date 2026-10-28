@@ -94,3 +94,11 @@
   `0.9.9 → 0.9.10 → 0.9.11 → 0.9.12 …`（`0.9.10` 仍属**小版本**，不是 `0.10.0`、更不是 `1.0.0`）。
 - 版本号 < 1.0.0 期间一律 **Pre-Release**（`0.9.10`、`0.9.11` 同样）。
 - 仅当用户**明确指明**中版本/大版本更新时，才允许 b / a 位变化。
+
+## I. v0.9.10 新增需求
+
+| # | 需求 | 状态 | 代码位置 / 说明 |
+|---|------|------|----------------|
+| I1 | AI 输出的 Markdown/LaTeX（`\frac`、`\sqrt` 等）必须可正常阅读 | ✅ | 新增 `lib/widgets/markdown_latex.dart`：Markdown 块级/行内 + LaTeX → Unicode（`3/4`、`√(5)`、`x²`、`≤`），`LatexRenderer` 委托渲染，纯 Dart 无崩溃 |
+| I2 | 增加「部分错误」选项（橙色） | ✅ | `AnswerCard` 第 5 个按钮（橙 `#FF9F43`）；`SolveProvider.markPartial()`；历史页同步；知识点按半掌握（correct+1/wrong+1）；错题复习含 partial |
+| I3 | 大题含多个小题时由 AI 拆成独立条目 | ✅ | `AiConfig.systemPrompt` 要求 (1)(2)(3)/①②③ 拆分，每小题独立 content/answer/solution/knowledge_points；LaTeX 统一标准写法 |
