@@ -74,8 +74,17 @@ allprojects { p ->
 GRADLE_INIT
 
 # 环境变量
-export ANDROID_HOME="${ANDROID_HOME:-/opt/android}"
+# 沙箱环境会不定期清空 /opt，故工具链优先使用仓库内持久目录 .toolchain/；
+# 不存在时再回退系统路径（本地开发机通常已装好）。
+if [ -d "$ROOT/.toolchain/android/platforms" ]; then
+  export ANDROID_HOME="${ANDROID_HOME:-$ROOT/.toolchain/android}"
+else
+  export ANDROID_HOME="${ANDROID_HOME:-/opt/android}"
+fi
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
+if [ -x "$ROOT/.toolchain/flutter/bin/flutter" ]; then
+  export PATH="$ROOT/.toolchain/flutter/bin:$PATH"
+fi
 # pub.dev / storage.googleapis.com 在本构建网络下会长时间无响应（挂起在 Downloading packages），
 # 官方中国镜像实测秒级返回，故默认使用镜像（CI 上可用同名环境变量覆盖回官方源）。
 export PUB_HOSTED_URL="${PUB_HOSTED_URL:-https://pub.flutter-io.cn}"
@@ -92,14 +101,15 @@ echo "==> 版本: $VERSION  产物: $APP_NAME  仓库: ${REPO:-<from gh>}"
 
 # ---------- 1. 确保 Flutter ----------
 if ! command -v flutter >/dev/null 2>&1; then
-  echo "==> 未检测到 flutter，开始安装 Flutter SDK ..."
-  mkdir -p /opt
-  if [ ! -f /opt/flutter.tar.xz ]; then
-    curl -L -C - -o /opt/flutter.tar.xz \
+  echo "==> 未检测到 flutter，开始安装 Flutter SDK（持久目录 .toolchain）..."
+  mkdir -p "$ROOT/.toolchain"
+  if [ ! -f "$ROOT/.toolchain/flutter.tar.xz" ]; then
+    curl -L -C - --http1.1 --retry 6 --retry-all-errors \
+      -o "$ROOT/.toolchain/flutter.tar.xz" \
       "${FLUTTER_STORAGE_BASE_URL}/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.1-stable.tar.xz"
   fi
-  tar -xf /opt/flutter.tar.xz -C /opt
-  export PATH="/opt/flutter/bin:$PATH"
+  tar -xf "$ROOT/.toolchain/flutter.tar.xz" -C "$ROOT/.toolchain"
+  export PATH="$ROOT/.toolchain/flutter/bin:$PATH"
 fi
 command -v flutter >/dev/null 2>&1 || { echo "flutter 安装失败"; exit 1; }
 flutter config --no-analytics
