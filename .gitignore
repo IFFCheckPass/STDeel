@@ -51,3 +51,6 @@ app.*.map.json
 # 签名密钥（仅存在于 feature/signing-config 分支，严禁并入 main）
 android/upload-keystore.jks
 android/key.properties
+
+# 本地构建工具链（持久化，勿提交）
+/.toolchain/
