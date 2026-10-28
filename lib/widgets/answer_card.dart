@@ -1,11 +1,12 @@
 /// 答案卡片 - 思谛 STDeel
 ///
-/// 液态玻璃卡片。左侧竖向 4 个按钮：
+/// 液态玻璃卡片。左侧竖向 5 个按钮：
 ///   - 重答（蓝）
 ///   - 疑问（黄）
+///   - 部分错误（橙，大题多小题部分答错）
 ///   - 错误（红）
 ///   - 正确（绿）
-/// 右侧：题目 + 知识点标签 + 答案 + 解答过程（LaTeX 渲染）
+/// 右侧：题目 + 知识点标签 + 答案 + 解答过程（Markdown / LaTeX 渲染）
 library;
 
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ class AnswerCard extends StatelessWidget {
     required this.onAskDetailed,
     required this.onMarkCorrect,
     required this.onMarkWrong,
+    required this.onMarkPartial,
     this.feedback = 'none',
     this.isLoading = false,
   });
@@ -33,11 +35,15 @@ class AnswerCard extends StatelessWidget {
   final VoidCallback onAskDetailed;
   final VoidCallback onMarkCorrect;
   final VoidCallback onMarkWrong;
-  final String feedback; // none | correct | wrong
+
+  /// 部分错误（大题含多小题，部分小题答错）
+  final VoidCallback onMarkPartial;
+  final String feedback; // none | correct | partial | wrong
   final bool isLoading;
 
   static const _colorRetry = G.accent;
   static const _colorQuestion = G.amber;
+  static const _colorPartial = Color(0xFFFF9F43); // 橙：部分错误
   static const _colorWrong = G.coral;
   static const _colorCorrect = G.mint;
 
@@ -85,6 +91,14 @@ class AnswerCard extends StatelessWidget {
             color: _colorQuestion,
             icon: Icons.help_outline_rounded,
             onTap: onAskDetailed,
+          ),
+          const SizedBox(height: 8),
+          _actionButton(
+            label: '部分错误',
+            color: _colorPartial,
+            icon: Icons.remove_circle_outline_rounded,
+            selected: feedback == 'partial',
+            onTap: onMarkPartial,
           ),
           const SizedBox(height: 8),
           _actionButton(

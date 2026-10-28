@@ -325,6 +325,26 @@ class SolveProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// "部分错误"按钮：大题含多个小题时，部分小题答错。
+  /// 知识点按「半掌握」累计（correct +1、wrong +1），既不算全对也不算全错。
+  Future<void> markPartial({
+    required int questionId,
+    required List<String> knowledgePoints,
+    String subject = '未分类',
+  }) async {
+    await _db.solveRecordDao.updateFeedback(questionId, 'partial');
+    for (final kp in knowledgePoints) {
+      await _db.knowledgeDao.upsert(
+        knowledgePoint: kp,
+        subject: subject,
+        deltaCorrect: 1,
+        deltaWrong: 1,
+      );
+    }
+    await _sync.uploadFeedback(questionId, 'partial');
+    notifyListeners();
+  }
+
   /// "错误"按钮
   Future<void> markWrong({
     required int questionId,

@@ -279,6 +279,7 @@ class _AnswerScreenState extends State<AnswerScreen> {
               onAskDetailed: () => _onAskDetailed(context, q),
               onMarkCorrect: () => _onMarkCorrect(context, q),
               onMarkWrong: () => _onMarkWrong(context, q),
+              onMarkPartial: () => _onMarkPartial(context, q),
             ),
         ],
       ),
