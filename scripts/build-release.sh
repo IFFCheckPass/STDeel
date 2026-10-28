@@ -45,11 +45,41 @@ else
   echo "!! 未找到 JDK 17，将使用默认 JDK（可能导致 Kotlin 编译挂起）"
 fi
 
+# ---------- 0.5 Gradle 仓库镜像（规避 Maven Central 429 限流） ----------
+# Flutter 内置构建 / 插件解析会走官方仓库，公共网络常被限流(429)导致构建失败。
+# 写入全局 init.gradle 强制走阿里云镜像（仅构建环境，不进入仓库、不影响应用数据）。
+mkdir -p "$HOME/.gradle"
+cat > "$HOME/.gradle/init.gradle" <<'GRADLE_INIT'
+def applyMirrors = { repos ->
+    repos.clear()
+    repos.maven { url = uri('https://maven.aliyun.com/repository/google') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/public') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/central') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+}
+def addMirrors = { repos ->
+    repos.maven { url = uri('https://maven.aliyun.com/repository/google') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/public') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/central') }
+    repos.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+}
+beforeSettings { settings ->
+    applyMirrors(settings.pluginManagement.repositories)
+    applyMirrors(settings.buildscript.repositories)
+    addMirrors(settings.dependencyResolutionManagement.repositories)
+}
+allprojects { p ->
+    applyMirrors(p.buildscript.repositories)
+}
+GRADLE_INIT
+
 # 环境变量
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export PUB_HOSTED_URL="${PUB_HOSTED_URL:-https://pub.dev}"
-export FLUTTER_STORAGE_BASE_URL="${FLUTTER_STORAGE_BASE_URL:-https://storage.googleapis.com}"
+# pub.dev / storage.googleapis.com 在本构建网络下会长时间无响应（挂起在 Downloading packages），
+# 官方中国镜像实测秒级返回，故默认使用镜像（CI 上可用同名环境变量覆盖回官方源）。
+export PUB_HOSTED_URL="${PUB_HOSTED_URL:-https://pub.flutter-io.cn}"
+export FLUTTER_STORAGE_BASE_URL="${FLUTTER_STORAGE_BASE_URL:-https://mirrors.cloud.tencent.com/flutter}"
 
 # 解析版本号（默认取 pubspec.yaml）
 VERSION="$(sed -n 's/^version: *//p' pubspec.yaml | head -1 | tr -d ' ')"

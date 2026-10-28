@@ -288,8 +288,10 @@ class SyncService {
             (row['action_type'] ?? row['status'])?.toString().trim() ?? '';
         final rawFeedback = row['user_feedback']?.toString().trim() ?? '';
         final isFeedback = rawAction == 'correct' ||
+            rawAction == 'partial' ||
             rawAction == 'wrong' ||
             rawFeedback == 'correct' ||
+            rawFeedback == 'partial' ||
             rawFeedback == 'wrong';
         final actionType = rawAction.isNotEmpty
             ? rawAction

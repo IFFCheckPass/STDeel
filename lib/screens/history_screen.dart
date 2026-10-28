@@ -128,11 +128,15 @@ class _HistoryCardState extends State<_HistoryCard> {
     return const [];
   }
 
-  /// 按题目状态返回四色标记（颜色 / 图标 / 文案）：
-  /// correct=绿(正确) / wrong=红(错误) / retry=蓝(重答) / detail=黄(疑问) / 其余中性(解题)
+  /// 按题目状态返回标记（颜色 / 图标 / 文案）：
+  /// correct=绿(正确) / partial=橙(部分错误) / wrong=红(错误) / retry=蓝(重答)
+  /// / detail=黄(疑问) / 其余中性(解题)
   (Color, IconData, String) _statusStyle(String action, String feedback) {
     if (feedback == 'correct') {
       return (G.mint, Icons.check_circle_rounded, '正确');
+    }
+    if (feedback == 'partial') {
+      return (const Color(0xFFFF9F43), Icons.remove_circle_rounded, '部分错误');
     }
     if (feedback == 'wrong') {
       return (G.coral, Icons.cancel_rounded, '错误');
@@ -318,6 +322,15 @@ class _HistoryCardState extends State<_HistoryCard> {
                         color: G.amber,
                         icon: Icons.help_outline_rounded,
                         onPressed: () => _retryOrDetail(actionType: 'detail'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _actionBtn(
+                        label: '部分',
+                        color: const Color(0xFFFF9F43),
+                        icon: Icons.remove_circle_outline_rounded,
+                        onPressed: () => _markFeedback('partial'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -523,12 +536,14 @@ class _HistoryCardState extends State<_HistoryCard> {
     await db.solveRecordDao.updateFeedback(r.id, feedback);
     final kps = _knowledgePoints;
     final isCorrect = feedback == 'correct';
+    final isPartial = feedback == 'partial';
     for (final kp in kps) {
       await db.knowledgeDao.upsert(
         knowledgePoint: kp,
         subject: r.subject,
-        deltaCorrect: isCorrect ? 1 : 0,
-        deltaWrong: isCorrect ? 0 : 1,
+        // 部分错误按「半掌握」计：correct +1、wrong +1
+        deltaCorrect: (isCorrect || isPartial) ? 1 : 0,
+        deltaWrong: (isCorrect || isPartial) ? (isPartial ? 1 : 0) : 1,
       );
     }
     // 异步上传至后端（失败静默，等下次手动同步重试）
@@ -536,7 +551,9 @@ class _HistoryCardState extends State<_HistoryCard> {
     if (!mounted) return;
     showGlassSnackBar(
       context,
-      isCorrect ? '已标记正确，知识点统计已更新' : '已标记错误，薄弱知识点已记录',
+      isCorrect
+          ? '已标记正确，知识点统计已更新'
+          : (isPartial ? '已标记部分错误，知识点按半掌握统计' : '已标记错误，薄弱知识点已记录'),
       success: true,
     );
     widget.onChanged();

@@ -279,6 +279,7 @@ class _AnswerScreenState extends State<AnswerScreen> {
               onAskDetailed: () => _onAskDetailed(context, q),
               onMarkCorrect: () => _onMarkCorrect(context, q),
               onMarkWrong: () => _onMarkWrong(context, q),
+              onMarkPartial: () => _onMarkPartial(context, q),
             ),
         ],
       ),
@@ -350,5 +351,16 @@ class _AnswerScreenState extends State<AnswerScreen> {
     );
     if (!context.mounted) return;
     showGlassSnackBar(context, '已标记错误，薄弱知识点已记录', success: true);
+  }
+
+  Future<void> _onMarkPartial(BuildContext context, QuestionResult q) async {
+    final solve = context.read<SolveProvider>();
+    await solve.markPartial(
+      questionId: q.id,
+      knowledgePoints: q.knowledgePoints,
+      subject: q.subject,
+    );
+    if (!context.mounted) return;
+    showGlassSnackBar(context, '已标记部分错误，知识点按半掌握统计', success: true);
   }
 }

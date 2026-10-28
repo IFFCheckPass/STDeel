@@ -29,10 +29,17 @@ class SolveRecordDao extends DatabaseAccessor<AppDatabase>
   Future<SolveRecordEntity?> getById(int id) =>
       (select(solveRecords)..where((t) => t.id.equals(id))).getSingleOrNull();
 
-  /// 获取所有标记为某反馈（correct / wrong）的记录
+  /// 获取所有标记为某反馈（correct / partial / wrong）的记录
   Future<List<SolveRecordEntity>> getByFeedback(String feedback) =>
       (select(solveRecords)
             ..where((t) => t.userFeedback.equals(feedback))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .get();
+
+  /// 获取标记为任一反馈的记录（错题复习：wrong + partial）
+  Future<List<SolveRecordEntity>> getByFeedbackAny(List<String> feedbacks) =>
+      (select(solveRecords)
+            ..where((t) => t.userFeedback.isIn(feedbacks))
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
