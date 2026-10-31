@@ -29,6 +29,11 @@ class SolveRecordDao extends DatabaseAccessor<AppDatabase>
   Future<SolveRecordEntity?> getById(int id) =>
       (select(solveRecords)..where((t) => t.id.equals(id))).getSingleOrNull();
 
+  /// 按后端主键取单条记录（下拉同步比对状态用，避免用旧数据覆盖本地反馈）
+  Future<SolveRecordEntity?> getByRemoteId(int remoteId) =>
+      (select(solveRecords)..where((t) => t.remoteId.equals(remoteId)))
+          .getSingleOrNull();
+
   /// 获取所有标记为某反馈（correct / partial / wrong）的记录
   Future<List<SolveRecordEntity>> getByFeedback(String feedback) =>
       (select(solveRecords)
