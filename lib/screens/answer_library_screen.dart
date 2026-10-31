@@ -16,6 +16,7 @@ import '../providers/settings_provider.dart';
 import '../services/document_split_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/markdown_latex.dart' show latexToUnicode;
 
 class AnswerLibraryScreen extends StatefulWidget {
   const AnswerLibraryScreen({super.key});
@@ -326,11 +327,11 @@ class _AnswerLibraryScreenState extends State<AnswerLibraryScreen> {
                                     ? (r.questionNo != null
                                         ? '第 ${r.questionNo} 题（仅答案）'
                                         : '（无题干条目）')
-                                    : r.questionText,
+                                    : latexToUnicode(r.questionText),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              subtitle: Text('答案：${r.answer}'),
+                              subtitle: Text('答案：${latexToUnicode(r.answer)}'),
                               trailing: Text('${r.source}'),
                             ),
                           );

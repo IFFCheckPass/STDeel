@@ -765,3 +765,29 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 Actions 构建 `stdeel-setup-0.9.11.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.11
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.12（✅ 双端构建并发布，小版本：0.9.11 → c 位 +1，统一 Markdown/LaTeX 输出与全页面解析）
+- **版本**：`pubspec.yaml version: 0.9.12+39`；`settings_screen.dart` 角标 `v0.9.12`。
+- **用户反馈**：历史记录里题干/解答仍原样显示 `\(...\)`、`\mathbf`、`\overrightarrow` 等，
+  说明这些页面未走解析；要求提示词统一格式、软件全面适配。
+- **根因**：
+  1. 历史页题干、答案、解答用的是纯 `Text`/`SelectableText`，从未经过 Markdown/LaTeX 渲染；
+  2. `latexToUnicode()` 未覆盖模型常用命令：`\overrightarrow`、`\mathbf`、`\mathbb`、
+     `\begin{cases}`、`\left|`、`\overline` 等，未知命令会残留命令名与花括号。
+- **修复**：
+  - 历史页：展开态题干/答案/解答统一走 `LatexRenderer`；折叠态两行摘要先 `latexToUnicode`；
+  - 知识点「相关错题」与答案库列表摘要同样做 LaTeX→Unicode；
+  - `latexToUnicode` 增强：向量/箭头（组合字符 `⃗`）、重音（`hat/bar/tilde/vec/overline`）、
+    `\mathbb/\mathcal`、`\begin/\end` 环境、`\left|/\right|`、`\overset`、`\not`、
+    `\ldots/\cdots` 等；新增未知命令兜底（`\foo{bar}` → `bar`），并补全裸公式识别列表；
+  - 提示词统一：`systemPrompt` / `documentSplitPrompt` 明确要求 answer/solution 使用
+    **Markdown 排版 + `$...$` 包裹的标准 LaTeX**，禁止 `\(...\)`、`\[...\]`、HTML、代码块。
+- **验证**：`flutter test` 11 项全通过（新增向量/花括号环境/未知命令兜底 3 组）；
+  `flutter analyze` 无 error/warning（133 info）。
+- **环境**：本会话 `/workspace/.toolchain` 再次被整体重置，重建 Flutter 3.47.1（Tencent 镜像）、
+  cmdline-tools、platform-35/36、build-tools 36、NDK 28.2、cmake 3.22.1；
+  cmdline-tools 与 platform 包改走 `https://mirrors.cloud.tencent.com/AndroidSDK/`，下载更快。
+- **发布（双端）**：`v0.9.12` Pre-Release 上传 `app-0.9.12.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.9.12.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.12
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

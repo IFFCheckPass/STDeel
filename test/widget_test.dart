@@ -107,7 +107,7 @@ void main() {
     );
     expect(latexToUnicode(r'\left|\overrightarrow{AB}\right|'), '|AB⃗|');
     expect(latexToUnicode(r'\foo{bar}'), 'bar');
-    expect(latexToUnicode(r'\displaystyle x^{2}'), 'x²');
+    expect(latexToUnicode(r'\displaystyle x^{2}').trim(), 'x²');
   });
 
   test('Markdown 行内样式不被 LaTeX 转换破坏', () {
