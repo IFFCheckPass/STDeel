@@ -88,4 +88,29 @@ void main() {
     expect(latexToUnicode('圆的标准方程'), '圆的标准方程');
     expect(latexToUnicode('m=3, n=4'), 'm=3, n=4');
   });
+
+  // ---- v0.9.12：向量/重音/集合/环境等模型常用语法 ----
+  test('LaTeX 向量、粗体与集合符号转换', () {
+    expect(
+      latexToUnicode(r'\overrightarrow{AB}=\mathbf{a}+2\mathbf{b}'),
+      'AB⃗=a+2b',
+    );
+    expect(latexToUnicode(r'\mathbb{R}'), 'ℝ');
+    expect(latexToUnicode(r'\vec{a}'), 'a⃗');
+    expect(latexToUnicode(r'\overline{AB}'), 'AB̅');
+  });
+
+  test('LaTeX 环境/多行/未知命令兜底', () {
+    expect(
+      latexToUnicode(r'\begin{cases}x+y=1\\x-y=3\end{cases}'),
+      'x+y=1\nx-y=3',
+    );
+    expect(latexToUnicode(r'\left|\overrightarrow{AB}\right|'), '|AB⃗|');
+    expect(latexToUnicode(r'\foo{bar}'), 'bar');
+    expect(latexToUnicode(r'\displaystyle x^{2}'), 'x²');
+  });
+
+  test('Markdown 行内样式不被 LaTeX 转换破坏', () {
+    expect(latexToUnicode('**重点**：圆的标准方程'), '**重点**：圆的标准方程');
+  });
 }

@@ -55,7 +55,9 @@ class AiConfig {
 - 若一道大题包含多个小题（如 (1)(2)(3) 或 ①②③），必须把每个小题拆成 questions 数组中的独立条目：
   在每个小题的 content 中保留小题编号与完整题干，并分别给出该小题自己的 answer、solution、knowledge_points；
   不要把多个小题合并在同一条目内，也不要只给整体答案。
-- 输出 Markdown/LaTeX 数学公式时，请使用标准 LaTeX（如 \\frac{3}{4}、\\sqrt{5}、x^{2}）。
+- answer 与 solution 字段内部必须使用 Markdown 排版：可用 **加粗**、- 或 1. 列表、### 小标题、换行分段；
+  数学公式一律使用标准 LaTeX 并用 $ 包裹（如 $\\frac{3}{4}$、$\\sqrt{5}$、$x^{2}$、$\\overrightarrow{AB}$），
+  严禁使用 \\(...\\)、\\[...\\] 定界符，严禁输出 HTML 或代码块。
 仅返回 JSON，不要附加任何解释性文字。
 ''';
 
@@ -77,8 +79,8 @@ class AiConfig {
 - question_no: 该题在卷子中的题号（如 3；文档中有题号就用题号，无法确定时用 0）
 - content: 题干（完整、准确；如果文档中只有题号与答案、没有原题，请输出空字符串 ""）
 - subject: 该题所属科目（如 数学、语文、英语、物理、化学、生物、政治、历史、地理、其他）
-- answer: 标准答案
-- solution: 简略的解答过程
+- answer: 标准答案（内部用 Markdown 排版，公式用 $...$ 包裹的标准 LaTeX）
+- solution: 简略的解答过程（内部用 Markdown 排版，公式用 $...$ 包裹的标准 LaTeX）
 - knowledge_points: 知识点标签数组（1~5 个，如 ["三角函数","两角和差公式"]），都归属于 subject 对应学科
 - confidence: 一个 0~1 之间的置信度
 返回纯 JSON，格式如下（不要输出任何解释文字，不要用 markdown 代码块）：

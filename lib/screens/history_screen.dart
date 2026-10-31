@@ -18,6 +18,8 @@ import '../providers/solve_provider.dart';
 import '../services/backend_api.dart';
 import '../services/sync_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/latex_renderer.dart';
+import '../widgets/markdown_latex.dart' show latexToUnicode;
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -188,18 +190,34 @@ class _HistoryCardState extends State<_HistoryCard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          r.questionText.isEmpty ? '（空题干）' : r.questionText,
-                          maxLines: _expanded ? null : 2,
-                          overflow: _expanded
-                              ? TextOverflow.visible
-                              : TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.5,
-                            color: G.textPrimary,
+                        // 展开时按 Markdown + LaTeX 渲染（历史页此前用纯文本，
+                        // 导致 \(...\)、\mathbf 等公式原样显示）；折叠时只显示
+                        // 两行纯文本摘要，避免卡片高度失控。
+                        if (_expanded)
+                          LatexRenderer(
+                            text: r.questionText.isEmpty
+                                ? '（空题干）'
+                                : r.questionText,
+                            isBlock: false,
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.5,
+                              color: G.textPrimary,
+                            ),
+                          )
+                        else
+                          Text(
+                            r.questionText.isEmpty
+                                ? '（空题干）'
+                                : latexToUnicode(r.questionText),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.5,
+                              color: G.textPrimary,
+                            ),
                           ),
-                        ),
                         const SizedBox(height: 6),
                         Row(
                           children: [
@@ -447,8 +465,9 @@ class _HistoryCardState extends State<_HistoryCard> {
           ),
         ),
         const SizedBox(height: 4),
-        SelectableText(
-          body,
+        LatexRenderer(
+          text: body,
+          isBlock: false,
           style: const TextStyle(fontSize: 13, height: 1.6),
         ),
       ],
