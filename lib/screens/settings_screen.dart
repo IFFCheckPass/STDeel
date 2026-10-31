@@ -1,4 +1,4 @@
-/// 设置页 - 思谛 STDeel（v0.9.11 卡片化）
+/// 设置页 - 思谛 STDeel（v0.9.12 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
@@ -468,7 +468,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ===== 关于 / 更新 =====
           _ExpCard(
             title: '关于 / 更新',
-            summary: '版本 v0.9.11',
+            summary: '版本 v0.9.12',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -490,7 +490,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.11',
+              '思谛 STDeel · v0.9.12',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),

@@ -390,11 +390,17 @@ List<InlineSpan> _markdownSpans(String text, TextStyle base) {
 /// 是否含明确 LaTeX 命令（用于识别"裸公式"，避免误伤普通文本）
 bool _looksLikeLatex(String s) {
   return RegExp(
-    r'\\(frac|dfrac|tfrac|sqrt|times|cdot|div|pm|mp|le|leq|ge|geq|ne|neq|'
-    r'approx|equiv|infty|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|'
-    r'omega|sum|prod|int|lim|log|ln|sin|cos|tan|left|right|angle|triangle|'
-    r'because|therefore|in|notin|subset|cup|cap|to|rightarrow|Rightarrow|'
-    r'overline|vec|text|mathrm|mathbf)',
+    r'\\(frac|dfrac|tfrac|cfrac|sqrt|times|cdot|div|pm|mp|le|leq|ge|geq|'
+    r'ne|neq|approx|equiv|infty|alpha|beta|gamma|delta|theta|lambda|mu|pi|'
+    r'sigma|omega|sum|prod|int|lim|log|ln|sin|cos|tan|left|right|angle|'
+    r'triangle|because|therefore|in|notin|subset|supset|cup|cap|to|'
+    r'rightarrow|Rightarrow|leftarrow|leftrightarrow|mapsto|overline|'
+    r'underline|vec|text|mathrm|mathbf|mathit|mathbb|mathcal|mathscr|'
+    r'overrightarrow|overleftarrow|overleftrightarrow|hat|bar|tilde|dot|'
+    r'ddot|boldsymbol|operatorname|boxed|begin|end|displaystyle|phantom|'
+    r'hspace|tag|not|limits|stackrel|overset|underset|substack|color|'
+    r'textcolor|ldots|cdots|dots|vdots|ddots|mid|neg|lnot|land|wedge|lor|'
+    r'vee|implies|iff|ni|aleph|hbar|ell|partial|nabla|circ|perp|parallel)',
   ).hasMatch(s);
 }
 
@@ -409,18 +415,48 @@ String latexToUnicode(String input) {
   // 数学定界符（本函数处理的就是公式段，直接去掉 $）
   s = s.replaceAll(r'$', '');
 
-  // 去掉数学定界符/间距命令
+  // 定界符 / 自适应括号 / 转义
   s = s.replaceAll(RegExp(r'\\[()\[\]]'), '');
-  s = s.replaceAll(RegExp(r'\\(left|right|big|Big|bigg|Bigg)\b'), '');
-  s = s.replaceAll(RegExp(r'\\(quad|qquad|,|;|:|!)'), ' ');
+  s = s.replaceAll(RegExp(r'\\left\s*\.|\\right\s*\.'), '');
+  s = s.replaceAll(RegExp(r'\\(left|right|big|Big|bigg|Bigg|middle)\b'), '');
+  s = s.replaceAll(RegExp(r'\\(quad|qquad|qquads?|,|;|:|!)'), ' ');
+  s = s.replaceAll(r'\ ', ' ');
+  s = s.replaceAll(r'\/', '');
+  s = s.replaceAll(r'\|', '‖');
   s = s.replaceAll('\\%', '%');
   s = s.replaceAll(r'\{', '{').replaceAll(r'\}', '}');
-  s = s.replaceAll(r'\&', '&');
-  s = s.replaceAll(RegExp(r'\\\\'), '\n');
+  s = s.replaceAll(r'\#', '#');
+  s = s.replaceAll(r'\_', '_');
+  s = s.replaceAll(r'\^', '^');
+  s = s.replaceAll(r'\~', '~');
+
+  // 环境/表格：\begin{...} / \end{...} 整体去掉；& 为列分隔 → 空格
+  s = s.replaceAll(RegExp(r'\\(begin|end)\s*\{[A-Za-z*]+\}'), '');
+  s = s.replaceAll(RegExp(r'\\(hline|cline|toprule|midrule|bottomrule)\b'), '');
   s = s.replaceAll('&', ' ');
+  s = s.replaceAll(r'\&', '&');
+  // 公式换行（cases / matrix 的行分隔）→ 真实换行
+  s = s.replaceAll(RegExp(r'\\\\'), '\n');
+
+  // 无参数布局命令
+  s = s.replaceAll(
+    RegExp(r'\\(displaystyle|textstyle|scriptstyle|scriptscriptstyle|'
+        r'limits|nolimits|nonumber|notag)\b'),
+    '',
+  );
+
+  // 只占位、无可见内容的命令（连同参数一起删除）
+  for (final name in const [
+    'label', 'tag', 'hspace', 'vspace', 'phantom', 'hphantom', 'vphantom',
+    'rule', 'cline', 'color', 'definecolor',
+  ]) {
+    s = _replaceCommandGroups(s, [name], (_) => '');
+  }
+  s = _replaceCommandGroups(s, const ['textcolor'],
+      (a) => a.length >= 2 ? a[1] : '');
 
   // 分数（支持嵌套花括号；从内向外多轮替换）
-  s = _replaceCommandGroups(s, const ['frac', 'dfrac', 'tfrac'], (args) {
+  s = _replaceCommandGroups(s, const ['frac', 'dfrac', 'tfrac', 'cfrac'], (args) {
     if (args.length < 2) return null;
     final a = args[0].trim();
     final b = args[1].trim();
@@ -436,12 +472,62 @@ String latexToUnicode(String input) {
   // 根号：\sqrt[n]{x} / \sqrt{x}
   s = _replaceSqrt(s);
 
-  // 文本类命令：\text{...} / \mathrm{...} / \mathbf{...} → 内部内容
+  // 向量/箭头：用组合字符保留"上方箭头"的语义（\overrightarrow{AB} → AB⃗）
+  s = _replaceCommandGroups(s, const ['overrightarrow'],
+      (a) => a.isEmpty ? null : '${a.first}\u20D7');
+  s = _replaceCommandGroups(s, const ['overleftarrow'],
+      (a) => a.isEmpty ? null : '${a.first}\u20D6');
+  s = _replaceCommandGroups(s, const ['overleftrightarrow'],
+      (a) => a.isEmpty ? null : '${a.first}\u20E1');
+
+  // 重音（overline/hat/bar/tilde/vec 等）→ 组合字符
+  const accents = <String, String>{
+    'overline': '\u0305',
+    'underline': '\u0332',
+    'vec': '\u20D7',
+    'hat': '\u0302',
+    'widehat': '\u0302',
+    'bar': '\u0304',
+    'tilde': '\u0303',
+    'widetilde': '\u0303',
+    'dot': '\u0307',
+    'ddot': '\u0308',
+    'check': '\u030C',
+    'breve': '\u0306',
+    'acute': '\u0301',
+    'grave': '\u0300',
+    'mathring': '\u030A',
+  };
+  for (final e in accents.entries) {
+    s = _replaceCommandGroups(s, [e.key],
+        (a) => a.isEmpty ? null : '${a.first}${e.value}');
+  }
+
+  // 双线体 / 花体（\mathbb{R}→ℝ、\mathbb{N}→ℕ 等）
+  s = _replaceCommandGroups(s, const ['mathbb'], (a) {
+    if (a.isEmpty) return null;
+    final t = a.first;
+    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
+    return t.split('').map((c) => _bbMap[c] ?? c).join();
+  });
+  s = _replaceCommandGroups(s, const ['mathcal', 'mathscr'], (a) {
+    if (a.isEmpty) return null;
+    final t = a.first;
+    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
+    return t.split('').map((c) => _calMap[c] ?? c).join();
+  });
+
+  // 上下叠加：\overset{上}{基} → 基
+  s = _replaceCommandGroups(s, const ['overset', 'underset', 'stackrel'],
+      (a) => a.isEmpty ? null : (a.length >= 2 ? a[1] : a.first));
+
+  // 文本/字体类命令 → 内部内容（粗体/斜体在纯文本下退化为普通字形）
   s = _replaceCommandGroups(
     s,
     const [
-      'text', 'mathrm', 'mathbf', 'mathit', 'textbf', 'operatorname',
-      'overline', 'underline', 'vec', 'hat', 'bar', 'widehat', 'widetilde',
+      'text', 'textrm', 'textnormal', 'textsf', 'texttt', 'textbf', 'textit',
+      'mbox', 'mathrm', 'mathbf', 'mathit', 'mathsf', 'mathtt', 'boldsymbol',
+      'bm', 'pmb', 'mathfrak', 'operatorname', 'boxed', 'substack',
     ],
     (args) => args.isEmpty ? null : args.first,
   );
@@ -456,19 +542,34 @@ String latexToUnicode(String input) {
     (m) => _toSubscript(m.group(1) ?? m.group(2) ?? ''),
   );
 
+  // 逻辑否定组合（必须早于符号映射，否则 \not 会被拆成 "not"）
+  s = s.replaceAll(r'\not\in', '∉');
+  s = s.replaceAll(r'\not\subset', '⊄');
+  s = s.replaceAll(r'\not\le', '≰');
+  s = s.replaceAll(r'\not\ge', '≱');
+  s = s.replaceAll(r'\not=', '≠');
+  s = s.replaceAll(RegExp(r'\\not(?![A-Za-z])'), '');
+
   // 常用命令 → 符号
   const symbols = <String, String>{
     'times': '×', 'cdot': '·', 'div': '÷', 'pm': '±', 'mp': '∓',
     'le': '≤', 'leq': '≤', 'ge': '≥', 'geq': '≥', 'ne': '≠', 'neq': '≠',
-    'approx': '≈', 'equiv': '≡', 'sim': '∼', 'propto': '∝',
-    'infty': '∞', 'angle': '∠', 'triangle': '△', 'degree': '°',
-    'circ': '∘', 'perp': '⊥', 'parallel': '∥',
-    'sum': '∑', 'prod': '∏', 'int': '∫', 'partial': '∂',
-    'in': '∈', 'notin': '∉', 'subset': '⊂', 'subseteq': '⊆',
+    'lt': '<', 'gt': '>', 'approx': '≈', 'equiv': '≡', 'sim': '∼',
+    'propto': '∝', 'infty': '∞', 'angle': '∠', 'triangle': '△',
+    'degree': '°', 'circ': '∘', 'perp': '⊥', 'parallel': '∥', 'mid': '|',
+    'nmid': '∤', 'bullet': '•', 'star': '★', 'odot': '⊙',
+    'sum': '∑', 'prod': '∏', 'int': '∫', 'partial': '∂', 'nabla': '∇',
+    'in': '∈', 'notin': '∉', 'ni': '∋', 'subset': '⊂', 'subseteq': '⊆',
+    'supset': '⊃', 'supseteq': '⊇',
     'cup': '∪', 'cap': '∩', 'emptyset': '∅', 'varnothing': '∅',
-    'to': '→', 'rightarrow': '→', 'Rightarrow': '⇒',
+    'to': '→', 'rightarrow': '→', 'Rightarrow': '⇒', 'implies': '⇒',
     'leftarrow': '←', 'Leftarrow': '⇐', 'leftrightarrow': '↔',
+    'Leftrightarrow': '⇔', 'iff': '⇔', 'mapsto': '↦',
     'therefore': '∴', 'because': '∵', 'forall': '∀', 'exists': '∃',
+    'neg': '¬', 'lnot': '¬', 'land': '∧', 'wedge': '∧', 'lor': '∨',
+    'vee': '∨', 'oplus': '⊕', 'otimes': '⊗',
+    'ldots': '…', 'cdots': '⋯', 'dots': '…', 'vdots': '⋮', 'ddots': '⋱',
+    'aleph': 'ℵ', 'hbar': 'ℏ', 'ell': 'ℓ', 'prime': '′',
     'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
     'varepsilon': 'ε', 'zeta': 'ζ', 'eta': 'η', 'theta': 'θ',
     'vartheta': 'ϑ', 'iota': 'ι', 'kappa': 'κ', 'lambda': 'λ', 'mu': 'μ',
@@ -481,8 +582,11 @@ String latexToUnicode(String input) {
     'log': 'log', 'ln': 'ln', 'lg': 'lg', 'sin': 'sin', 'cos': 'cos',
     'tan': 'tan', 'cot': 'cot', 'sec': 'sec', 'csc': 'csc', 'lim': 'lim',
     'max': 'max', 'min': 'min', 'arg': 'arg', 'det': 'det', 'gcd': 'gcd',
-    'overline': '', 'vec': '', 'hat': '', 'bar': '',
   };
+  // 兜底：未知命令 `\foo{参数}` 只保留参数内容，避免把命令名和花括号原样显示；
+  // 已登记在 [symbols] 中的命令保持反斜杠形式，交给下一步映射为符号。
+  s = _resolveUnknownCommands(s, symbols.keys.toSet());
+
   s = s.replaceAllMapped(RegExp(r'\\([A-Za-z]+)'), (m) {
     final name = m.group(1)!;
     return symbols[name] ?? name; // 未知命令：去掉反斜杠，保留可读命令名
@@ -491,6 +595,75 @@ String latexToUnicode(String input) {
   // 清理多余空格（保留换行）
   s = s.replaceAll(RegExp(r'[ \t]{2,}'), ' ');
   return s;
+}
+
+/// 双线体字母（\mathbb）
+const Map<String, String> _bbMap = {
+  'A': '𝔸', 'B': '𝔹', 'C': 'ℂ', 'D': '𝔻', 'E': '𝔼', 'F': '𝔽', 'G': '𝔾',
+  'H': 'ℍ', 'I': '𝕀', 'J': '𝕁', 'K': '𝕂', 'L': '𝕃', 'M': '𝕄', 'N': 'ℕ',
+  'O': '𝕆', 'P': 'ℙ', 'Q': 'ℚ', 'R': 'ℝ', 'S': '𝕊', 'T': '𝕋', 'U': '𝕌',
+  'V': '𝕍', 'W': '𝕎', 'X': '𝕏', 'Y': '𝕐', 'Z': 'ℤ',
+};
+
+/// 花体字母（\mathcal / \mathscr）
+const Map<String, String> _calMap = {
+  'A': '𝒜', 'B': 'ℬ', 'C': '𝒞', 'D': '𝒟', 'E': 'ℰ', 'F': 'ℱ', 'G': '𝒢',
+  'H': 'ℋ', 'I': 'ℐ', 'J': '𝒥', 'K': '𝒦', 'L': 'ℒ', 'M': 'ℳ', 'N': '𝒩',
+  'O': '𝒪', 'P': '𝒫', 'Q': '𝒬', 'R': 'ℛ', 'S': '𝒮', 'T': '𝒯', 'U': '𝒰',
+  'V': '𝒱', 'W': '𝒲', 'X': '𝒳', 'Y': '𝒴', 'Z': '𝒵',
+};
+
+/// 兜底清理未知 LaTeX 命令：
+/// - `\foo{参数}` → 参数内容（多参数以空格连接）；
+/// - `\foo`（无参数）→ 去掉反斜杠，保留命令名；
+/// - [handled] 中的命令原样保留（交由后续符号映射处理）。
+String _resolveUnknownCommands(String s, Set<String> handled) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < s.length) {
+    if (s[i] != r'\') {
+      out.write(s[i]);
+      i++;
+      continue;
+    }
+    var j = i + 1;
+    while (j < s.length && _isAsciiLetter(s[j])) {
+      j++;
+    }
+    if (j == i + 1) {
+      out.write(s[i]);
+      i++;
+      continue;
+    }
+    final name = s.substring(i + 1, j);
+    if (handled.contains(name)) {
+      out.write(s.substring(i, j));
+      i = j;
+      continue;
+    }
+    // 吃掉紧随其后的连续 {..} 参数
+    var k = j;
+    final args = <String>[];
+    while (k < s.length && s[k] == '{') {
+      final end = _matchBrace(s, k);
+      if (end < 0) break;
+      args.add(s.substring(k + 1, end));
+      k = end + 1;
+    }
+    if (args.isNotEmpty) {
+      out.write(args.join(' '));
+      i = k;
+    } else {
+      out.write(name);
+      i = j;
+    }
+  }
+  return out.toString();
+}
+
+bool _isAsciiLetter(String ch) {
+  final c = ch.codeUnitAt(0);
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
 }
 
 /// 匹配 `\cmd{...}{...}`（支持嵌套花括号），对参数做转换后交给 [build]

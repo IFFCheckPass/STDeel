@@ -18,6 +18,7 @@ import '../providers/settings_provider.dart';
 import '../providers/solve_provider.dart';
 import '../services/ai_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/markdown_latex.dart' show latexToUnicode;
 
 class KnowledgeScreen extends StatefulWidget {
   const KnowledgeScreen({super.key});
@@ -474,9 +475,10 @@ class _KnowledgeScreenState extends State<KnowledgeScreen> {
               for (final r in related)
                 ListTile(
                   dense: true,
-                  title: Text(r.questionText,
+                  // 列表摘要同样做 LaTeX → Unicode，避免显示 \frac/\mathbf 原文
+                  title: Text(latexToUnicode(r.questionText),
                       maxLines: 2, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('答案：${r.answer}'),
+                  subtitle: Text('答案：${latexToUnicode(r.answer)}'),
                 ),
           ],
         ),

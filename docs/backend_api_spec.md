@@ -1,4 +1,7 @@
-# 思谛 STDeel — 前端 ↔ 后端接口契约（当前实现，v0.9.10）
+# 思谛 STDeel — 前端 ↔ 后端接口契约（v0.9.10 及以前，历史参考）
+
+> ⚠️ 已被 [`docs/backend_requirements.md`](backend_requirements.md)（v0.9.11 后端重写需求）取代。
+> 本文档保留作历史参考；新后端以新版需求文档为准。
 
 > 本文档按**前端现有代码**逐条整理，供后端重写/对齐使用。
 > 依据：`lib/services/backend_api.dart`、`lib/services/sync_service.dart`、
