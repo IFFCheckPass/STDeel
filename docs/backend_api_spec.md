@@ -137,7 +137,9 @@
       "solution": "简略解答过程",
       "confidence": 0.95,
       "subject": "数学",
-      "question_no": 0
+      "question_no": 0,
+      "action_type": "solve",
+      "user_feedback": "none"
     }
   ]
 }
@@ -154,8 +156,16 @@
 | `confidence` | double | AI 置信度 0~1 |
 | `subject` | string | 科目，见 §5 |
 | `question_no` | int | 卷内题号，未知为 0 |
+| `action_type` | string | 该题最近动作，见 §5（初始为 `solve`） |
+| `user_feedback` | string | 该题反馈，见 §5（初始为 `none`） |
 | `image_path` | string | **设备本地绝对路径**，不是 URL，后端视为不透明字符串或忽略 |
 | `source` | string | `ai` / `answer_library` / `error` |
+
+> **状态字段必须落库**：`action_type` / `user_feedback` 是题目状态（正确/部分错误/错误/疑问/重答）的唯一载体。
+> 后端 `POST /solve-records`、`PATCH .../feedback`、`GET /solve-records` 必须原样存取这两个字段；
+> 若后端落库或回传时丢失它们，前端会看到状态被清空。
+> 前端已做保护：① 后端**未回传明确反馈**（缺失/空串/`none`）时，不会覆盖本地已有的 `correct/partial/wrong`；
+> ② 本地存在**尚未上传**的新状态时，以本地为准；只有后端明确回传反馈且本地无待传状态，才以后端为准。
 
 **响应（前端会递归收集所有数字 `id`）**
 
@@ -409,3 +419,5 @@ Query：`user_id`；响应 `{ "items": [ ... ] }`，前端原样透传给上层�
 8. 允许 Base URL 带任意路径前缀（如 `https://host/stapi`），且 `healthz` 在 host 根。
 9. 时间字段统一 ISO-8601；非 2xx 前端不会解析错误体，建议 2xx + 业务结果放 body。
 10. 接口需容忍重复提交（离线补传、删除队列重试都会产生重复请求）。
+11. **必须持久化并回传 `action_type` / `user_feedback`**（批量上传每个 question、单条补传、PATCH、GET 四处都要）；
+    后端若存成默认值或回传空值，用户已标记的题目状态会「同步一次就丢」。

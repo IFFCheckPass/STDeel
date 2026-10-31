@@ -61,14 +61,28 @@ class SyncService {
     List<int>? recordIds,
   }) async {
     try {
+      // 题目状态必须随记录上传（action_type / user_feedback），否则后端只能
+      // 存成默认值，下拉同步时会把用户已标记的正确/错误/部分错误清空。
+      // 状态取自刚落库的本地记录（[recordIds] 与 questions 一一对应）。
+      final questions = <Map<String, dynamic>>[];
+      for (var i = 0; i < result.questions.length; i++) {
+        final q = result.questions[i];
+        final json = q.toJson();
+        final recordId =
+            (recordIds != null && i < recordIds.length) ? recordIds[i] : null;
+        final rec =
+            recordId == null ? null : await _db.solveRecordDao.getById(recordId);
+        json['action_type'] = rec?.actionType ?? 'solve';
+        json['user_feedback'] = rec?.userFeedback ?? 'none';
+        questions.add(json);
+      }
       final payload = <String, dynamic>{
         'ai_model': result.aiModel,
         'latency_ms': result.latencyMs,
         'tokens_used': result.tokensUsed,
         'source': result.source,
         'image_path': result.imagePath,
-        'questions':
-            result.questions.map((q) => q.toJson()).toList(growable: false),
+        'questions': questions,
       };
       final ids = await _api.uploadSolveRecord(payload);
       if (recordIds != null) {
@@ -293,12 +307,28 @@ class SyncService {
             rawFeedback == 'correct' ||
             rawFeedback == 'partial' ||
             rawFeedback == 'wrong';
-        final actionType = rawAction.isNotEmpty
-            ? rawAction
-            : (isFeedback ? rawFeedback : 'solve');
-        final userFeedback = isFeedback
-            ? (rawFeedback.isNotEmpty ? rawFeedback : rawAction)
-            : 'none';
+        // 后端未回传明确反馈（字段缺失 / 空串 / none）时，**绝不能用默认值覆盖**
+        // 本地已标记的 correct/partial/wrong，否则每同步一次状态就被清空。
+        final local = await _db.solveRecordDao.getByRemoteId(remoteId);
+        final localFeedback = local?.userFeedback ?? 'none';
+        final localHasFeedback =
+            const ['correct', 'partial', 'wrong'].contains(localFeedback);
+        String actionType;
+        String userFeedback;
+        if (isFeedback && (local == null || local.synced)) {
+          // 后端明确回传了反馈，且本地没有待上传的新状态：以后端为准
+          userFeedback = rawFeedback.isNotEmpty ? rawFeedback : rawAction;
+          actionType = rawAction.isNotEmpty ? rawAction : userFeedback;
+        } else if (localHasFeedback) {
+          // 本地已有明确反馈：保留，不降级
+          actionType = local!.actionType;
+          userFeedback = localFeedback;
+        } else {
+          // 无反馈记录：采纳后端动作（retry/detail/solve），缺省回落本地
+          actionType =
+              rawAction.isNotEmpty ? rawAction : (local?.actionType ?? 'solve');
+          userFeedback = 'none';
+        }
         await _db.solveRecordDao.upsertFromBackend(
           remoteId: remoteId,
           questionText: row['question_text']?.toString() ?? '',

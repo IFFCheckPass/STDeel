@@ -734,3 +734,34 @@ rm -f android/upload-keystore.jks android/key.properties
   `feature/windows-support` merge main 后 push 触发 build-windows Actions 构建 `stdeel-setup-0.9.10.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.10
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.11（✅ 双端构建并发布，小版本：0.9.10 → c 位 +1，修复「同步后题目状态被清空」）
+- **版本**：`pubspec.yaml version: 0.9.11+38`；`settings_screen.dart` 角标 `v0.9.11`。
+- **用户反馈**：题目状态（正确/错误/部分错误/疑问/重答）在本地正常，同步到服务端后被清空；
+  且批量上传接口未携带状态字段。
+- **根因**：
+  1. `SyncService.pullSolveRecords()` 回写时**无条件**用后端字段覆盖本地
+     `user_feedback` / `action_type`；后端未实现或未回传这两字段时，默认值
+     `none` / `solve` 把本地已标记的状态清掉（"同步一次就丢"）。
+  2. `uploadSolveResult()` 的批量 `questions[]` 里没有 `action_type` / `user_feedback`，
+     后端无从落库状态（只有后续 PATCH 和单条补传才带）。
+- **修复**：
+  - 批量上传 `questions[]` 逐题附带 `action_type` + `user_feedback`（取自刚落库的本地记录）；
+  - 下拉合并策略（`pullSolveRecords`）：后端**未回传明确反馈**（缺失/空串/`none`）时
+    **不覆盖**本地已有的 `correct/partial/wrong`；本地存在**未同步的新状态**时以本地为准；
+    只有后端明确回传反馈且本地无待传状态才以后端为准；
+  - `SolveRecordDao.getByRemoteId()` 新增，用于按后端主键比对本地状态。
+- **契约文档**：`docs/backend_api_spec.md` 明确要求后端在 `POST /solve-records`、
+  `PATCH .../feedback`、`GET /solve-records` 四处**必须持久化并回传** `action_type` / `user_feedback`。
+- **环境踩坑（本轮沙箱重置后重建工具链）**：
+  - `/workspace/.toolchain` 亦被清空（虽在仓库目录内但被整体重置）→ 重新下载 Flutter 3.47.1（1.57GB）
+    与 cmdline-tools；`sdkmanager` 安装 platform-36 时出现 `Unexpected end of ZLIB input stream`
+    （下载损坏，platform-36 仅 12K、缺 `android.jar`），Gradle 卡在 `Preparing Install Android SDK Platform 36`。
+    解决：从 Tencent 镜像 `https://mirrors.cloud.tencent.com/AndroidSDK/platform-36_r02.zip`
+    重新下载解压到 `platforms/android-36`（校验 `android.jar` 存在、`Pkg.Revision=2`），再重跑构建。
+  - Gradle 阶段 642.4s（缓存已热）；产物 75.7MB，签名校验仅 v2 / `CN=STDeel` 通过。
+- **验证**：`flutter analyze` 无 error/warning（133 info）、`flutter test` 8 项全通过。
+- **发布（双端）**：`v0.9.11` Pre-Release 上传 `app-0.9.11.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.9.11.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.11
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
