@@ -74,16 +74,21 @@ allprojects { p ->
 GRADLE_INIT
 
 # 环境变量
-# 沙箱环境会不定期清空 /opt，故工具链优先使用仓库内持久目录 .toolchain/；
-# 不存在时再回退系统路径（本地开发机通常已装好）。
-if [ -d "$ROOT/.toolchain/android/platforms" ]; then
-  export ANDROID_HOME="${ANDROID_HOME:-$ROOT/.toolchain/android}"
+# 沙箱环境会在会话重启时把仓库目录恢复成 git 状态并清空未跟踪文件，
+# 因此工具链优先放在**仓库外**的持久目录 /root/.toolchain；
+# 本地开发机没有该目录时再回退仓库内 .toolchain/ 与系统路径。
+TC="/root/.toolchain"
+if [ ! -d "$TC/flutter" ] && [ -d "$ROOT/.toolchain/flutter" ]; then
+  TC="$ROOT/.toolchain"
+fi
+if [ -d "$TC/android/platforms" ]; then
+  export ANDROID_HOME="${ANDROID_HOME:-$TC/android}"
 else
   export ANDROID_HOME="${ANDROID_HOME:-/opt/android}"
 fi
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
-if [ -x "$ROOT/.toolchain/flutter/bin/flutter" ]; then
-  export PATH="$ROOT/.toolchain/flutter/bin:$PATH"
+if [ -x "$TC/flutter/bin/flutter" ]; then
+  export PATH="$TC/flutter/bin:$PATH"
 fi
 # pub.dev / storage.googleapis.com 在本构建网络下会长时间无响应（挂起在 Downloading packages），
 # 官方中国镜像实测秒级返回，故默认使用镜像（CI 上可用同名环境变量覆盖回官方源）。
@@ -101,17 +106,21 @@ echo "==> 版本: $VERSION  产物: $APP_NAME  仓库: ${REPO:-<from gh>}"
 
 # ---------- 1. 确保 Flutter ----------
 if ! command -v flutter >/dev/null 2>&1; then
-  echo "==> 未检测到 flutter，开始安装 Flutter SDK（持久目录 .toolchain）..."
-  mkdir -p "$ROOT/.toolchain"
-  if [ ! -f "$ROOT/.toolchain/flutter.tar.xz" ]; then
+  echo "==> 未检测到 flutter，开始安装 Flutter SDK（持久目录 $TC）..."
+  mkdir -p "$TC"
+  if [ ! -f "$TC/flutter.tar.xz" ]; then
     curl -L -C - --http1.1 --retry 6 --retry-all-errors \
-      -o "$ROOT/.toolchain/flutter.tar.xz" \
+      -o "$TC/flutter.tar.xz" \
       "${FLUTTER_STORAGE_BASE_URL}/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.1-stable.tar.xz"
   fi
-  tar -xf "$ROOT/.toolchain/flutter.tar.xz" -C "$ROOT/.toolchain"
-  export PATH="$ROOT/.toolchain/flutter/bin:$PATH"
+  tar -xf "$TC/flutter.tar.xz" -C "$TC"
+  export PATH="$TC/flutter/bin:$PATH"
 fi
 command -v flutter >/dev/null 2>&1 || { echo "flutter 安装失败"; exit 1; }
+# 仓库内兼容软链（本地开发时习惯用 .toolchain/，重启后被清掉也不影响 /root）
+if [ ! -e "$ROOT/.toolchain" ]; then
+  ln -s "$TC" "$ROOT/.toolchain" 2>/dev/null || true
+fi
 flutter config --no-analytics
 
 # ---------- 2. 确保 Android SDK ----------
@@ -119,7 +128,7 @@ if [ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
   echo "==> 安装 Android cmdline-tools ..."
   mkdir -p "$ANDROID_HOME/cmdline-tools"
   curl -L -o "$ANDROID_HOME/cmdline-tools/clt.zip" \
-    "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+    "https://mirrors.cloud.tencent.com/AndroidSDK/commandlinetools-linux-11076708_latest.zip"
   (cd "$ANDROID_HOME/cmdline-tools" && unzip -q clt.zip && mv cmdline-tools latest && rm -f clt.zip)
 fi
 SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -132,8 +141,23 @@ for _try in 1 2; do
   sleep 3
 done
 SDK_PKGS="${SDK_PKGS:-platforms;android-34}"
-echo "$SDK_PKGS" "platform-tools" "build-tools;36.0.0" | xargs -n1 "$SDKMGR" --install 2>&1 || true
+echo "$SDK_PKGS" "platform-tools" "build-tools;36.0.0" \
+  "cmake;3.22.1" "ndk;28.2.13676358" | xargs -n1 "$SDKMGR" --install 2>&1 || true
 yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+
+# sdkmanager 偶发下载损坏（platform 目录只有几 KB、缺 android.jar），
+# 表现为 Gradle 卡在 "Preparing Install Android SDK Platform 36"。用 Tencent 镜像修复。
+if [ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" ]; then
+  echo "==> 修复 platform-36（sdkmanager 下载可能不完整）..."
+  mkdir -p "$ANDROID_HOME/platforms"
+  curl -L --retry 4 -o /tmp/platform-36.zip \
+    "https://mirrors.cloud.tencent.com/AndroidSDK/platform-36_r02.zip"
+  rm -rf /tmp/p36 "$ANDROID_HOME/platforms/android-36"
+  mkdir -p /tmp/p36
+  (cd /tmp/p36 && unzip -q -o /tmp/platform-36.zip)
+  mv /tmp/p36/android-36 "$ANDROID_HOME/platforms/android-36"
+  rm -rf /tmp/p36 /tmp/platform-36.zip
+fi
 
 # ---------- 3. 取签名文件（不并入库/不合并分支） ----------
 echo "==> 从 feature/signing-config 分支取签名文件（仅本地构建）"

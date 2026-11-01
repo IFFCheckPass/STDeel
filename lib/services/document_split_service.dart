@@ -19,6 +19,7 @@ import 'package:pdfx/pdfx.dart';
 
 import '../config/ai_config.dart';
 import '../models/solve_result.dart';
+import '../utils/latex_commands.dart';
 import 'ai_service.dart';
 
 /// 文档拆分结果
@@ -243,7 +244,9 @@ class DocumentSplitService {
       final z = text.lastIndexOf(']');
       if (a >= 0 && z > a) {
         try {
-          final list = jsonDecode(text.substring(a, z + 1)) as List<dynamic>;
+          final list = jsonDecode(
+            repairLatexEscapesInJson(text.substring(a, z + 1)),
+          ) as List<dynamic>;
           return list
               .map((e) => QuestionResult.fromJson(e as Map<String, dynamic>))
               .toList();
@@ -254,8 +257,9 @@ class DocumentSplitService {
     }
     if (start < 0 || end < 0 || end <= start) return [];
     try {
-      final decoded = jsonDecode(text.substring(start, end + 1))
-          as Map<String, dynamic>;
+      final decoded = jsonDecode(
+        repairLatexEscapesInJson(text.substring(start, end + 1)),
+      ) as Map<String, dynamic>;
       final list = decoded['questions'] as List<dynamic>?;
       if (list != null) {
         return list

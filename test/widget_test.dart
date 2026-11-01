@@ -1,9 +1,11 @@
 /// 基础冒烟测试 - 思谛 STDeel
 library;
 
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:convert';
 
+import 'package:flutter_test/flutter_test.dart';
 import 'package:stdeel/models/ai_provider.dart';
+import 'package:stdeel/utils/latex_commands.dart';
 import 'package:stdeel/widgets/markdown_latex.dart';
 
 void main() {
@@ -108,9 +110,53 @@ void main() {
     expect(latexToUnicode(r'\left|\overrightarrow{AB}\right|'), '|AB⃗|');
     expect(latexToUnicode(r'\foo{bar}'), 'bar');
     expect(latexToUnicode(r'\displaystyle x^{2}').trim(), 'x²');
+    expect(latexToUnicode(r'\begin{array}{c|c}a&b\end{array}'), 'a b');
+    expect(latexToUnicode(r'\binom{5}{2}'), 'C(5,2)');
   });
 
   test('Markdown 行内样式不被 LaTeX 转换破坏', () {
     expect(latexToUnicode('**重点**：圆的标准方程'), '**重点**：圆的标准方程');
+  });
+
+  // ---- v0.9.13：模型常见的"单 token 参数"写法（\frac32、\sqrt2、\mathbf e） ----
+  test('LaTeX 无花括号参数写法', () {
+    expect(latexToUnicode(r'\frac32'), '3/2');
+    expect(latexToUnicode(r'\frac ab'), 'a/b');
+    expect(latexToUnicode(r'2\sqrt2'), '2√(2)');
+    expect(latexToUnicode(r'\sqrt x'), '√(x)');
+    expect(latexToUnicode(r'\mathbf e_1'), 'e₁');
+    expect(latexToUnicode(r'\boldsymbol n'), 'n');
+    expect(latexToUnicode(r'\sqrt \alpha'), '√(α)');
+  });
+
+  test('抢救被吞掉反斜杠的残留命令名（历史记录）', () {
+    expect(latexToUnicode('2sqrt2'), '2√(2)');
+    expect(latexToUnicode('frac32'), '3/2');
+    expect(latexToUnicode('mathbf e₁'), 'e₁');
+    expect(latexToUnicode('boldsymbol n'), 'n');
+  });
+
+  test('命令与后续命令不粘连（\\times\\overrightarrow）', () {
+    expect(latexToUnicode(r'\times\overrightarrow{OA}'), '×OA⃗');
+    expect(latexToUnicode(r'\overrightarrow{A}\cdot\overrightarrow{B}'),
+        'A⃗·B⃗');
+  });
+
+  // ---- v0.9.13：修复模型在 JSON 中未转义 LaTeX 反斜杠 ----
+  test('JSON 中未转义的 LaTeX 反斜杠被修复', () {
+    final repaired = repairLatexEscapesInJson(r'{"answer": "\frac{3}{4}"}');
+    expect(jsonDecode(repaired)['answer'], r'\frac{3}{4}');
+
+    final s2 = repairLatexEscapesInJson(r'{"x": "\beta+\times"}');
+    expect(jsonDecode(s2)['x'], r'\beta+\times');
+
+    // 已正确转义的写法保持不变
+    final s3 = repairLatexEscapesInJson(r'{"answer": "\\frac{3}{4}"}');
+    expect(jsonDecode(s3)['answer'], r'\frac{3}{4}');
+
+    // 合法 JSON 转义不能被破坏
+    expect(jsonDecode(repairLatexEscapesInJson('{"x": "a\\nb"}'))['x'],
+        'a\nb');
+    expect(jsonDecode(repairLatexEscapesInJson(r'{"x": "\u4e2d"}'))['x'], '中');
   });
 }

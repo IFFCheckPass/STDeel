@@ -19,6 +19,7 @@ import 'package:dio/dio.dart';
 
 import '../config/ai_config.dart';
 import '../models/solve_result.dart';
+import '../utils/latex_commands.dart';
 import 'fault_log_service.dart';
 
 /// 流式事件，供 UI 与 FailoverManager 消费
@@ -283,7 +284,10 @@ class AiService {
 
             Map<String, dynamic> json;
             try {
-              json = jsonDecode(data) as Map<String, dynamic>;
+              // 部分供应商序列化时未转义 LaTeX 反斜杠（\frac 会变成 \f 控制符），
+              // 这里对 SSE 帧做同样的修复，保证流式片段里的公式不被损坏。
+              json = jsonDecode(repairLatexEscapesInJson(data))
+                  as Map<String, dynamic>;
             } catch (_) {
               continue;
             }
@@ -614,7 +618,10 @@ class AiService {
       if (a >= 0 && z > a) {
         final slice = text.substring(a, z + 1);
         try {
-          final list = jsonDecode(slice) as List<dynamic>;
+          // 模型可能把 LaTeX 直接写进 JSON（单个反斜杠），先修复再解码，
+          // 否则 \frac/\beta 会被 JSON 当成 \f/\b 控制字符静默损坏。
+          final list =
+              jsonDecode(repairLatexEscapesInJson(slice)) as List<dynamic>;
           return list
               .map((e) => QuestionResult.fromJson(e as Map<String, dynamic>))
               .toList();
@@ -626,7 +633,8 @@ class AiService {
     if (start < 0 || end < 0 || end <= start) return [];
     final slice = text.substring(start, end + 1);
     try {
-      final decoded = jsonDecode(slice) as Map<String, dynamic>;
+      final decoded =
+          jsonDecode(repairLatexEscapesInJson(slice)) as Map<String, dynamic>;
       final list = decoded['questions'] as List<dynamic>?;
       if (list != null) {
         return list

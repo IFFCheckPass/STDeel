@@ -791,3 +791,32 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 Actions 构建 `stdeel-setup-0.9.12.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.12
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.13（✅ 双端构建并发布，小版本：0.9.12 → c 位 +1，LaTeX 全量容错）
+- **版本**：`pubspec.yaml version: 0.9.13+40`；`settings_screen.dart` 角标 `v0.9.13`。
+- **用户反馈**：答案里仍有 `2sqrt2`、`frac32`、`mathbf e₁`、`timesA⃗`、`**2**` 等未解析。
+- **根因（三类）**：
+  1. **模型用 TeX 单 token 参数**：`\frac32`、`\sqrt2`、`\mathbf e`（不带花括号是合法 TeX），
+     旧解析只认 `{...}`，兜底后残留 `frac32` / `sqrt2` / `mathbf`；
+  2. **替换顺序导致命令粘连**：`\times\overrightarrow{A}` 先替换向量 → `\timesA⃗`，
+     `\times` 被读成不存在的 `timesA`；
+  3. **JSON 未转义反斜杠**：模型把 `\frac`/`\beta` 直接写进 JSON 字符串时，`\f`/`\b`/`\t`/`\n`
+     会变成控制字符（方框/空白），`\sqrt` 等非法转义则整题解析失败。
+- **修复**：
+  - 新增 `_replaceCommandArgs`：同时支持 `{...}` 与单 token 参数（`\frac32`、`\frac ab`、`\mathbf e`、
+    `\sqrt2`、`\sqrt \alpha`）；覆盖 frac/sqrt/向量/重音/mathbb/mathcal/overset/字体命令/binom/href；
+  - 符号命令（`\times`、`\cdot`、`\le`…）改为**先于**结构替换执行，杜绝命令名与后续字符粘连；
+  - `_inline` 的 `$...$` 公式段转换后仍走 Markdown 行内解析（修复 `$**2**$`、`$**(frac32...)**$` 原样显示）；
+  - 新增 `lib/utils/latex_commands.dart`：`repairLatexEscapesInJson()` 在 jsonDecode 前修复未转义
+    LaTeX 反斜杠（区分合法 `\n`/`\uXXXX` 与 LaTeX 命令），接入 `AiService._parseAnswer`、
+    流式 SSE 帧解析、`DocumentSplitService`；
+  - 补充 `array/tabular` 列格式参数、`\tag*`、`\bigl/\bigr`、`\binom`、`\href`、`\mathop` 等命令。
+- **验证**：`flutter test` 15 项全通过（新增单 token 参数、残余命令抢救、命令粘连、JSON 反斜杠修复 4 组）；
+  `flutter analyze` 无 error/warning（133 info）。
+- **环境**：会话重启会清空仓库内 `.toolchain`，改为持久目录 **`/root/.toolchain`**；
+  `scripts/build-release.sh` 优先使用该目录（并自动建 `.toolchain` 软链），
+  SDK 安装/修复走 Tencent 镜像；内置 platform-36 损坏自愈。
+- **发布（双端）**：`v0.9.13` Pre-Release 上传 `app-0.9.13.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.9.13.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.13
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
