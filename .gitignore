@@ -52,5 +52,6 @@ app.*.map.json
 android/upload-keystore.jks
 android/key.properties
 
-# 本地构建工具链（持久化，勿提交）
+# 本地构建工具链（持久化/软链，勿提交）
+/.toolchain
 /.toolchain/

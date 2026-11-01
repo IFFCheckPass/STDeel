@@ -297,10 +297,9 @@ List<InlineSpan> _inline(String text, TextStyle base) {
       spans.addAll(_markdownSpans(text.substring(cursor, m.start), base));
     }
     final tex = m.group(1) ?? m.group(2) ?? m.group(3) ?? m.group(4) ?? '';
-    spans.add(TextSpan(
-      text: latexToUnicode(tex).trim(),
-      style: base,
-    ));
+    // 公式段里也可能出现 Markdown 强调（如 $**2**$、$\textbf{...}$），
+    // 转换后仍走一次行内 Markdown 解析，避免把 ** 原样显示。
+    spans.addAll(_markdownSpans(latexToUnicode(tex), base));
     cursor = m.end;
   }
   if (cursor < text.length) {
@@ -401,7 +400,12 @@ bool _looksLikeLatex(String s) {
     r'hspace|tag|not|limits|stackrel|overset|underset|substack|color|'
     r'textcolor|ldots|cdots|dots|vdots|ddots|mid|neg|lnot|land|wedge|lor|'
     r'vee|implies|iff|ni|aleph|hbar|ell|partial|nabla|circ|perp|parallel)',
-  ).hasMatch(s);
+  ).hasMatch(s) ||
+      // 被 JSON 吞掉反斜杠后残留的命令名（历史记录/异常模型输出）
+      RegExp(
+        r'(^|[^A-Za-z\\])(sqrt[0-9A-Za-z]|frac[0-9]|'
+        r'mathbf|boldsymbol|mathrm|mathit|mathsf|mathtt|textbf|textit)',
+      ).hasMatch(s);
 }
 
 /// LaTeX 片段 → Unicode 可读文本（公开以便单元测试）。
@@ -412,14 +416,36 @@ bool _looksLikeLatex(String s) {
 String latexToUnicode(String input) {
   var s = input;
 
+  // 抢救"被 JSON 转义吞掉反斜杠"的残留命令名（历史记录中常见）：
+  //   sqrt2 → √(2)、2sqrt2 → 2√(2)、frac32 → 3/2、mathbf e → e
+  // 这些词不是普通英文单词，误伤概率极低。
+  s = s.replaceAllMapped(
+    RegExp(r'(^|[^A-Za-z\\])'
+        r'(mathbf|boldsymbol|mathrm|mathit|mathsf|mathtt|textbf|textit)'
+        r'\s+([A-Za-z0-9\u0370-\u03ff]+)'),
+    (m) => '${m.group(1)}${m.group(3)}',
+  );
+  s = s.replaceAllMapped(
+    RegExp(r'(^|[^A-Za-z\\])frac([0-9])([0-9])'),
+    (m) => '${m.group(1)}${m.group(2)}/${m.group(3)}',
+  );
+  s = s.replaceAllMapped(
+    RegExp(r'(^|[^A-Za-z\\])sqrt([0-9]+|[A-Za-z])'),
+    (m) => '${m.group(1)}√(${m.group(2)})',
+  );
+
   // 数学定界符（本函数处理的就是公式段，直接去掉 $）
   s = s.replaceAll(r'$', '');
 
   // 定界符 / 自适应括号 / 转义
   s = s.replaceAll(RegExp(r'\\[()\[\]]'), '');
   s = s.replaceAll(RegExp(r'\\left\s*\.|\\right\s*\.'), '');
-  s = s.replaceAll(RegExp(r'\\(left|right|big|Big|bigg|Bigg|middle)\b'), '');
-  s = s.replaceAll(RegExp(r'\\(quad|qquad|qquads?|,|;|:|!)'), ' ');
+  s = s.replaceAll(
+    RegExp(r'\\(left|right|middle|biggl|biggr|Biggl|Biggr|bigl|bigr|Bigl|'
+        r'Bigr|bigm|Bigm|bigg|Bigg|big|Big)\b'),
+    '',
+  );
+  s = s.replaceAll(RegExp(r'\\(quad|qquad|,|;|:|!)'), ' ');
   s = s.replaceAll(r'\ ', ' ');
   s = s.replaceAll(r'\/', '');
   s = s.replaceAll(r'\|', '‖');
@@ -431,8 +457,15 @@ String latexToUnicode(String input) {
   s = s.replaceAll(r'\~', '~');
 
   // 环境/表格：\begin{...} / \end{...} 整体去掉；& 为列分隔 → 空格
+  // array/tabular 后的列格式参数（{c|c}）也要去掉，否则会原样显示
+  s = s.replaceAll(
+    RegExp(r'\\(begin|end)\s*\{(array|tabular)\}\s*\{[^{}]*\}'),
+    '',
+  );
   s = s.replaceAll(RegExp(r'\\(begin|end)\s*\{[A-Za-z*]+\}'), '');
   s = s.replaceAll(RegExp(r'\\(hline|cline|toprule|midrule|bottomrule)\b'), '');
+  // \tag*{...} / \label{...} 整体删除
+  s = s.replaceAll(RegExp(r'\\(tag|label)\*?\s*\{[^{}]*\}'), '');
   s = s.replaceAll('&', ' ');
   s = s.replaceAll(r'\&', '&');
   // 公式换行（cases / matrix 的行分隔）→ 真实换行
@@ -445,103 +478,6 @@ String latexToUnicode(String input) {
     '',
   );
 
-  // 只占位、无可见内容的命令（连同参数一起删除）
-  for (final name in const [
-    'label', 'tag', 'hspace', 'vspace', 'phantom', 'hphantom', 'vphantom',
-    'rule', 'cline', 'color', 'definecolor',
-  ]) {
-    s = _replaceCommandGroups(s, [name], (_) => '');
-  }
-  s = _replaceCommandGroups(s, const ['textcolor'],
-      (a) => a.length >= 2 ? a[1] : '');
-
-  // 分数（支持嵌套花括号；从内向外多轮替换）
-  s = _replaceCommandGroups(s, const ['frac', 'dfrac', 'tfrac', 'cfrac'], (args) {
-    if (args.length < 2) return null;
-    final a = args[0].trim();
-    final b = args[1].trim();
-    final simpleA = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(a);
-    final simpleB = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(b);
-    if (simpleA && simpleB) return '$a/$b';
-    // 只给"复杂"的一侧加括号，保持可读性（如 (a+b)/2 而非 (a+b)/(2)）
-    if (simpleA && !simpleB) return '$a/($b)';
-    if (!simpleA && simpleB) return '($a)/$b';
-    return '($a)/($b)';
-  });
-
-  // 根号：\sqrt[n]{x} / \sqrt{x}
-  s = _replaceSqrt(s);
-
-  // 向量/箭头：用组合字符保留"上方箭头"的语义（\overrightarrow{AB} → AB⃗）
-  s = _replaceCommandGroups(s, const ['overrightarrow'],
-      (a) => a.isEmpty ? null : '${a.first}\u20D7');
-  s = _replaceCommandGroups(s, const ['overleftarrow'],
-      (a) => a.isEmpty ? null : '${a.first}\u20D6');
-  s = _replaceCommandGroups(s, const ['overleftrightarrow'],
-      (a) => a.isEmpty ? null : '${a.first}\u20E1');
-
-  // 重音（overline/hat/bar/tilde/vec 等）→ 组合字符
-  const accents = <String, String>{
-    'overline': '\u0305',
-    'underline': '\u0332',
-    'vec': '\u20D7',
-    'hat': '\u0302',
-    'widehat': '\u0302',
-    'bar': '\u0304',
-    'tilde': '\u0303',
-    'widetilde': '\u0303',
-    'dot': '\u0307',
-    'ddot': '\u0308',
-    'check': '\u030C',
-    'breve': '\u0306',
-    'acute': '\u0301',
-    'grave': '\u0300',
-    'mathring': '\u030A',
-  };
-  for (final e in accents.entries) {
-    s = _replaceCommandGroups(s, [e.key],
-        (a) => a.isEmpty ? null : '${a.first}${e.value}');
-  }
-
-  // 双线体 / 花体（\mathbb{R}→ℝ、\mathbb{N}→ℕ 等）
-  s = _replaceCommandGroups(s, const ['mathbb'], (a) {
-    if (a.isEmpty) return null;
-    final t = a.first;
-    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
-    return t.split('').map((c) => _bbMap[c] ?? c).join();
-  });
-  s = _replaceCommandGroups(s, const ['mathcal', 'mathscr'], (a) {
-    if (a.isEmpty) return null;
-    final t = a.first;
-    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
-    return t.split('').map((c) => _calMap[c] ?? c).join();
-  });
-
-  // 上下叠加：\overset{上}{基} → 基
-  s = _replaceCommandGroups(s, const ['overset', 'underset', 'stackrel'],
-      (a) => a.isEmpty ? null : (a.length >= 2 ? a[1] : a.first));
-
-  // 文本/字体类命令 → 内部内容（粗体/斜体在纯文本下退化为普通字形）
-  s = _replaceCommandGroups(
-    s,
-    const [
-      'text', 'textrm', 'textnormal', 'textsf', 'texttt', 'textbf', 'textit',
-      'mbox', 'mathrm', 'mathbf', 'mathit', 'mathsf', 'mathtt', 'boldsymbol',
-      'bm', 'pmb', 'mathfrak', 'operatorname', 'boxed', 'substack',
-    ],
-    (args) => args.isEmpty ? null : args.first,
-  );
-
-  // 上标 / 下标（逐字符转 Unicode，无法映射的保留 ^ / _ 形式）
-  s = s.replaceAllMapped(
-    RegExp(r'\^\{([^{}]*)\}|\^(\w)'),
-    (m) => _toSuperscript(m.group(1) ?? m.group(2) ?? ''),
-  );
-  s = s.replaceAllMapped(
-    RegExp(r'_\{([^{}]*)\}|_(\w)'),
-    (m) => _toSubscript(m.group(1) ?? m.group(2) ?? ''),
-  );
-
   // 逻辑否定组合（必须早于符号映射，否则 \not 会被拆成 "not"）
   s = s.replaceAll(r'\not\in', '∉');
   s = s.replaceAll(r'\not\subset', '⊄');
@@ -550,7 +486,10 @@ String latexToUnicode(String input) {
   s = s.replaceAll(r'\not=', '≠');
   s = s.replaceAll(RegExp(r'\\not(?![A-Za-z])'), '');
 
-  // 常用命令 → 符号
+  // 常用单 token 命令 → 符号。
+  // **必须先于分数/根号/向量等结构替换执行**：否则 `\times\overrightarrow{A}`
+  // 会先被向量替换成 `\timesA⃗`，命令名与后续字符粘连，`\times` 再也无法识别
+  // （截图中出现 "timesA⃗" 即此原因）。未知命令此处保持原样（保留反斜杠）。
   const symbols = <String, String>{
     'times': '×', 'cdot': '·', 'div': '÷', 'pm': '±', 'mp': '∓',
     'le': '≤', 'leq': '≤', 'ge': '≥', 'geq': '≥', 'ne': '≠', 'neq': '≠',
@@ -583,14 +522,134 @@ String latexToUnicode(String input) {
     'tan': 'tan', 'cot': 'cot', 'sec': 'sec', 'csc': 'csc', 'lim': 'lim',
     'max': 'max', 'min': 'min', 'arg': 'arg', 'det': 'det', 'gcd': 'gcd',
   };
-  // 兜底：未知命令 `\foo{参数}` 只保留参数内容，避免把命令名和花括号原样显示；
-  // 已登记在 [symbols] 中的命令保持反斜杠形式，交给下一步映射为符号。
-  s = _resolveUnknownCommands(s, symbols.keys.toSet());
-
   s = s.replaceAllMapped(RegExp(r'\\([A-Za-z]+)'), (m) {
     final name = m.group(1)!;
-    return symbols[name] ?? name; // 未知命令：去掉反斜杠，保留可读命令名
+    return symbols[name] ?? m.group(0)!;
   });
+
+  // 只占位、无可见内容的命令（连同花括号参数一起删除）
+  for (final name in const [
+    'label', 'tag', 'hspace', 'vspace', 'phantom', 'hphantom', 'vphantom',
+    'rule', 'cline', 'color', 'definecolor',
+  ]) {
+    s = _replaceCommandGroups(s, [name], (_) => '');
+  }
+  s = _replaceCommandGroups(s, const ['textcolor'],
+      (a) => a.length >= 2 ? a[1] : '');
+
+  // 分数：支持 \frac{a}{b}、\frac ab、\frac32（TeX 允许单 token 参数）
+  s = _replaceCommandArgs(
+      s, const ['frac', 'dfrac', 'tfrac', 'cfrac'], 2, (args) {
+    if (args.length < 2) return null;
+    final a = args[0].trim();
+    final b = args[1].trim();
+    final simpleA = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(a);
+    final simpleB = RegExp(r'^[\w\u0370-\u03ff]+$').hasMatch(b);
+    if (simpleA && simpleB) return '$a/$b';
+    // 只给"复杂"的一侧加括号，保持可读性（如 (a+b)/2 而非 (a+b)/(2)）
+    if (simpleA && !simpleB) return '$a/($b)';
+    if (!simpleA && simpleB) return '($a)/$b';
+    return '($a)/($b)';
+  });
+
+  // 根号：\sqrt[n]{x} / \sqrt{x} / \sqrt2
+  s = _replaceSqrt(s);
+
+  // 向量/箭头：用组合字符保留"上方箭头"的语义（\overrightarrow{AB} → AB⃗）
+  s = _replaceCommandArgs(s, const ['overrightarrow'], 1,
+      (a) => a.isEmpty ? null : '${a.first}\u20D7');
+  s = _replaceCommandArgs(s, const ['overleftarrow'], 1,
+      (a) => a.isEmpty ? null : '${a.first}\u20D6');
+  s = _replaceCommandArgs(s, const ['overleftrightarrow'], 1,
+      (a) => a.isEmpty ? null : '${a.first}\u20E1');
+
+  // 重音（overline/hat/bar/tilde/vec 等）→ 组合字符
+  const accents = <String, String>{
+    'overline': '\u0305',
+    'underline': '\u0332',
+    'vec': '\u20D7',
+    'hat': '\u0302',
+    'widehat': '\u0302',
+    'bar': '\u0304',
+    'tilde': '\u0303',
+    'widetilde': '\u0303',
+    'dot': '\u0307',
+    'ddot': '\u0308',
+    'check': '\u030C',
+    'breve': '\u0306',
+    'acute': '\u0301',
+    'grave': '\u0300',
+    'mathring': '\u030A',
+  };
+  for (final e in accents.entries) {
+    s = _replaceCommandArgs(s, [e.key], 1,
+        (a) => a.isEmpty ? null : '${a.first}${e.value}');
+  }
+
+  // 双线体 / 花体（\mathbb{R}→ℝ、\mathbb{N}→ℕ 等）
+  s = _replaceCommandArgs(s, const ['mathbb'], 1, (a) {
+    if (a.isEmpty) return null;
+    final t = a.first;
+    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
+    return t.split('').map((c) => _bbMap[c] ?? c).join();
+  });
+  s = _replaceCommandArgs(s, const ['mathcal', 'mathscr'], 1, (a) {
+    if (a.isEmpty) return null;
+    final t = a.first;
+    if (!RegExp(r'^[A-Za-z]+$').hasMatch(t)) return t;
+    return t.split('').map((c) => _calMap[c] ?? c).join();
+  });
+
+  // 上下叠加：\overset{上}{基} → 基
+  s = _replaceCommandArgs(s, const ['overset', 'underset', 'stackrel'], 2,
+      (a) => a.isEmpty ? null : a[1]);
+
+  // 组合数：\binom{n}{k} → C(n,k)
+  s = _replaceCommandArgs(
+    s,
+    const ['binom', 'dbinom', 'tbinom'],
+    2,
+    (a) => a.isEmpty
+        ? null
+        : 'C(${a[0].trim()},${a.length > 1 ? a[1].trim() : ''})',
+  );
+
+  // 链接：\href{url}{文本} → 文本
+  s = _replaceCommandArgs(s, const ['href'], 2,
+      (a) => a.length < 2 ? null : a[1]);
+
+  // 文本/字体类命令 → 内部内容（粗体/斜体在纯文本下退化为普通字形）
+  s = _replaceCommandArgs(
+    s,
+    const [
+      'text', 'textrm', 'textnormal', 'textsf', 'texttt', 'textbf', 'textit',
+      'mbox', 'mathrm', 'mathbf', 'mathit', 'mathsf', 'mathtt', 'boldsymbol',
+      'bm', 'pmb', 'mathfrak', 'operatorname', 'mathop', 'mathbin',
+      'mathrel', 'cancel', 'boxed', 'substack',
+    ],
+    1,
+    (args) => args.isEmpty ? null : args.first,
+  );
+
+  // 上标 / 下标（逐字符转 Unicode，无法映射的保留 ^ / _ 形式）
+  s = s.replaceAllMapped(
+    RegExp(r'\^\{([^{}]*)\}|\^(\w)'),
+    (m) => _toSuperscript(m.group(1) ?? m.group(2) ?? ''),
+  );
+  s = s.replaceAllMapped(
+    RegExp(r'_\{([^{}]*)\}|_(\w)'),
+    (m) => _toSubscript(m.group(1) ?? m.group(2) ?? ''),
+  );
+
+  // 再映射一次：结构命令的单 token 参数可能仍带反斜杠（如 \sqrt \alpha）
+  s = s.replaceAllMapped(RegExp(r'\\([A-Za-z]+)'), (m) {
+    final name = m.group(1)!;
+    return symbols[name] ?? m.group(0)!;
+  });
+
+  // 兜底：未知命令 `\foo{参数}` 只保留参数内容；无参数命令去掉反斜杠，
+  // 避免把命令名和花括号原样显示在答案里。
+  s = _resolveUnknownCommands(s, const <String>{});
 
   // 清理多余空格（保留换行）
   s = s.replaceAll(RegExp(r'[ \t]{2,}'), ' ');
@@ -666,6 +725,66 @@ bool _isAsciiLetter(String ch) {
   return (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
 }
 
+/// 替换 `\cmd` 的 [argCount] 个参数，兼容两种 TeX 写法：
+///   - 花括号：`\frac{a}{b}`、`\mathbf{e}`、`\overrightarrow{AB}`
+///   - 单 token（模型常见）：`\frac32`、`\frac ab`、`\mathbf e`、`\sqrt2`
+String _replaceCommandArgs(
+  String s,
+  List<String> names,
+  int argCount,
+  String? Function(List<String> args) build,
+) {
+  var out = s;
+  var guard = 0;
+  while (guard++ < 100) {
+    var changed = false;
+    for (final name in names) {
+      final marker = '\\$name';
+      final idx = out.indexOf(marker);
+      if (idx < 0) continue;
+      final after = idx + marker.length;
+      // 控制词后面若还是字母，说明是更长的命令（如 \mathbf → \mathbffoo）
+      if (after < out.length && _isAsciiLetter(out[after])) continue;
+      var pos = after;
+      final args = <String>[];
+      while (args.length < argCount && pos < out.length) {
+        // TeX 会忽略控制词后的空格（\frac ab / \frac 32）
+        while (pos < out.length && (out[pos] == ' ' || out[pos] == '\t')) {
+          pos++;
+        }
+        if (pos >= out.length) break;
+        if (out[pos] == '{') {
+          final end = _matchBrace(out, pos);
+          if (end < 0) break;
+          args.add(out.substring(pos + 1, end));
+          pos = end + 1;
+        } else if (out[pos] == r'\') {
+          // 参数本身是命令（如 \sqrt \alpha）
+          var j = pos + 1;
+          while (j < out.length && _isAsciiLetter(out[j])) {
+            j++;
+          }
+          if (j == pos + 1) break;
+          args.add(out.substring(pos, j));
+          pos = j;
+        } else {
+          // 单 token 参数（\frac32 的 3 / 2）
+          args.add(out[pos]);
+          pos++;
+        }
+      }
+      if (args.length < argCount) continue;
+      final replaced = build(args);
+      if (replaced == null) continue;
+      out = out.substring(0, idx) + replaced + out.substring(pos);
+      changed = true;
+      break;
+    }
+    if (!changed) break;
+  }
+  return out;
+}
+
 /// 匹配 `\cmd{...}{...}`（支持嵌套花括号），对参数做转换后交给 [build]
 String _replaceCommandGroups(
   String s,
@@ -700,7 +819,7 @@ String _replaceCommandGroups(
   return out;
 }
 
-/// `\sqrt[n]{x}` / `\sqrt{x}`
+/// `\sqrt[n]{x}` / `\sqrt{x}` / `\sqrt2` / `\sqrt x`
 String _replaceSqrt(String s) {
   var out = s;
   var guard = 0;
@@ -708,6 +827,8 @@ String _replaceSqrt(String s) {
     final idx = out.indexOf(r'\sqrt');
     if (idx < 0) break;
     var pos = idx + r'\sqrt'.length;
+    // \sqrtX 属于更长的命令名，跳过以免误伤（如 \sqrtfrac）
+    if (pos < out.length && _isAsciiLetter(out[pos])) break;
     var index = '';
     if (pos < out.length && out[pos] == '[') {
       final end = out.indexOf(']', pos);
@@ -716,12 +837,34 @@ String _replaceSqrt(String s) {
         pos = end + 1;
       }
     }
-    if (pos >= out.length || out[pos] != '{') break;
-    final end = _matchBrace(out, pos);
-    if (end < 0) break;
-    final body = out.substring(pos + 1, end).trim();
+    // 跳过控制词后的空格（\sqrt 2）
+    while (pos < out.length && (out[pos] == ' ' || out[pos] == '\t')) {
+      pos++;
+    }
+    if (pos >= out.length) break;
+    String body;
+    var next = pos;
+    if (out[pos] == '{') {
+      final end = _matchBrace(out, pos);
+      if (end < 0) break;
+      body = out.substring(pos + 1, end).trim();
+      next = end + 1;
+    } else if (out[pos] == r'\') {
+      // 参数是命令（\sqrt \alpha），留给后续符号映射
+      var j = pos + 1;
+      while (j < out.length && _isAsciiLetter(out[j])) {
+        j++;
+      }
+      if (j == pos + 1) break;
+      body = out.substring(pos, j);
+      next = j;
+    } else {
+      // 单 token（\sqrt2）
+      body = out[pos];
+      next = pos + 1;
+    }
     final root = index.isEmpty ? '√' : '${_toSuperscript(index)}√';
-    out = out.substring(0, idx) + '$root($body)' + out.substring(end + 1);
+    out = out.substring(0, idx) + '$root($body)' + out.substring(next);
   }
   return out;
 }
