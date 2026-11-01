@@ -820,3 +820,24 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 Actions 构建 `stdeel-setup-0.9.13.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.13
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.14（✅ 双端构建并发布，小版本：0.9.13 → c 位 +1，同步契约对齐 + API Key 上云修复）
+- **版本**：`pubspec.yaml version: 0.9.14+41`；`settings_screen.dart` 角标 `v0.9.14`。
+- **后端反馈（`frontend-todo.md`）**：云端 216 条记录 `knowledge_points` 全空、`created_at` 全挤在同一秒；
+  另用户反馈 API Key 实际从未上传到后端。
+- **根因**：
+  1. 单条补传（形态 B）根本没带 `knowledge_points`；批量上传也没有 `created_at`；
+  2. 设置页绑定账号后调用的是 `syncUserApiKeys(const [])`——空数组在前端直接短路返回 true，
+     等于**从未发起请求**；且 Key 同步只在启动时执行，绑定后不重启就永远不会上传。
+- **修复**：
+  - `POST /solve-records` 形态 A：`questions[]` 带 `knowledge_points`（取本地落库值）与每题 `created_at`，
+    顶层再带一份 `created_at`；形态 B 补上 `knowledge_points` 数组与原始 `created_at`（UTC ISO-8601）；
+  - `SettingsProvider`：`_syncAccountApiKeys` 改为公开 `syncAccountApiKeys()`，`_persist()`（新增/修改/
+    删除供应商与模型、导入备份）后自动同步；`setUsername` 绑定成功立即上传；设置页绑定后改用真实 Key 上传；
+  - `systemPrompt`：知识点要求同时给出**章节级 + 考点级**（并列出数学章节标准用词），禁止空数组。
+- **验证**：`flutter test` 15 项全通过；`flutter analyze` 无 error/warning（132 info）。
+- **环境**：会话重启再次清空 `/root/.toolchain`，按同样流程重建 Flutter/Android SDK（Tencent 镜像）。
+- **发布（双端）**：`v0.9.14` Pre-Release 上传 `app-0.9.14.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.9.14.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.14
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

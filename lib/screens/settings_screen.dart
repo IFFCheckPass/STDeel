@@ -1,4 +1,4 @@
-/// 设置页 - 思谛 STDeel（v0.9.13 卡片化）
+/// 设置页 - 思谛 STDeel（v0.9.14 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
@@ -17,7 +17,6 @@ import '../data/database.dart';
 import '../models/ai_provider.dart' show normalizeBaseUrl;
 import '../providers/settings_provider.dart';
 import '../services/backup_service.dart';
-import '../services/backend_api.dart';
 import '../services/data_integrity_service.dart';
 import '../services/fault_log_service.dart';
 import '../services/image_cache_service.dart';
@@ -468,7 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ===== 关于 / 更新 =====
           _ExpCard(
             title: '关于 / 更新',
-            summary: '版本 v0.9.13',
+            summary: '版本 v0.9.14',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -490,7 +489,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.13',
+              '思谛 STDeel · v0.9.14',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
@@ -831,8 +830,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     if (ok) {
       showGlassSnackBar(context, '账号绑定成功', success: true);
-      final api = context.read<BackendApi>();
-      final okKey = await api.syncUserApiKeys(const []);
+      // 绑定后把本机已配置的 Key 真正上传（旧代码传空数组 → 接口直接短路，永远不上云）
+      final okKey = await s.syncAccountApiKeys();
       if (mounted && !okKey) {
         showGlassSnackBar(
           context,

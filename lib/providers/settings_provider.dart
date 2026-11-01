@@ -74,7 +74,7 @@ class SettingsProvider extends ChangeNotifier {
     _loaded = true;
     notifyListeners();
     if (_username != null && _username!.isNotEmpty) {
-      unawaited(_syncAccountApiKeys());
+      unawaited(syncAccountApiKeys());
     }
     // 数据完整性强制核查（每次启动必须执行，见 AGENTS.md「数据完整性强制规则」）：
     // 快照关键数据 → SQLite/模型配置/账号核查 → 自愈（账号重绑等）。
@@ -215,6 +215,10 @@ class SettingsProvider extends ChangeNotifier {
     await _api.setAiCombosJson(
       jsonEncode(_providers.map((p) => p.toJson()).toList()),
     );
+    // 已绑定账号时，配置变更后立刻把最新 Key 同步到后端（失败静默，不影响本地）
+    if (_username != null && _username!.isNotEmpty) {
+      unawaited(syncAccountApiKeys());
+    }
   }
 
   // ---------- 供应商 / 模型管理 ----------
@@ -427,17 +431,21 @@ class SettingsProvider extends ChangeNotifier {
 
   // ---------- 账号绑定（隐藏预埋） ----------
 
-  Future<void> _syncAccountApiKeys() async {
+  /// 把本机已配置的 AI Key 全量同步到后端账号。
+  ///
+  /// - 未绑定账号 / 没有可用 Key：返回 true（仅本地保存，无需上云）；
+  /// - 返回 false 表示后端写入失败（UI 可提示稍后重试）。
+  Future<bool> syncAccountApiKeys() async {
     final u = _username;
-    if (u == null || u.isEmpty) return;
+    if (u == null || u.isEmpty) return true;
     final keys = <Map<String, dynamic>>[];
     for (final p in _providers) {
       if (p.isComplete && p.apiKey.trim().isNotEmpty) {
         keys.add({'api_key': p.apiKey.trim(), 'name': p.name, 'enabled': true});
       }
     }
-    if (keys.isEmpty) return;
-    await _api.syncUserApiKeys(keys);
+    if (keys.isEmpty) return true;
+    return _api.syncUserApiKeys(keys);
   }
 
   Future<bool> setUsername(String username) async {
@@ -446,7 +454,10 @@ class SettingsProvider extends ChangeNotifier {
     await _api.setUsername(u);
     notifyListeners();
     if (u.isNotEmpty && AppConfig.kAccountBindingEnabled) {
-      return _api.bindUserByUsername(u);
+      final ok = await _api.bindUserByUsername(u);
+      // 绑定成功后立刻上传 Key，避免"绑定了账号但从未重启 → Key 永远没上云"
+      if (ok) unawaited(syncAccountApiKeys());
+      return ok;
     }
     return true;
   }

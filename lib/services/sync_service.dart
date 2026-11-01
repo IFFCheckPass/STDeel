@@ -65,6 +65,7 @@ class SyncService {
       // 存成默认值，下拉同步时会把用户已标记的正确/错误/部分错误清空。
       // 状态取自刚落库的本地记录（[recordIds] 与 questions 一一对应）。
       final questions = <Map<String, dynamic>>[];
+      DateTime? solvedAt;
       for (var i = 0; i < result.questions.length; i++) {
         final q = result.questions[i];
         final json = q.toJson();
@@ -74,6 +75,14 @@ class SyncService {
             recordId == null ? null : await _db.solveRecordDao.getById(recordId);
         json['action_type'] = rec?.actionType ?? 'solve';
         json['user_feedback'] = rec?.userFeedback ?? 'none';
+        if (rec != null) {
+          // 知识点与解题时间以本地落库记录为准（后端组卷依赖这两项）：
+          // 缺了它们会导致云端 knowledge_points 全空、created_at 全部挤在接收时刻。
+          json['knowledge_points'] = _decodeKp(rec.knowledgePoints);
+          final at = rec.createdAt;
+          json['created_at'] = at.toUtc().toIso8601String();
+          solvedAt ??= at;
+        }
         questions.add(json);
       }
       final payload = <String, dynamic>{
@@ -82,6 +91,9 @@ class SyncService {
         'tokens_used': result.tokensUsed,
         'source': result.source,
         'image_path': result.imagePath,
+        // 顶层也带一份解题时间，兼容后端只读顶层 created_at 的实现
+        'created_at':
+            (solvedAt ?? DateTime.now()).toUtc().toIso8601String(),
         'questions': questions,
       };
       final ids = await _api.uploadSolveRecord(payload);
@@ -215,6 +227,9 @@ class SyncService {
           'question_text': r.questionText,
           'answer': r.answer,
           'solution': r.solution,
+          'knowledge_points': _decodeKp(r.knowledgePoints),
+          // 原始解题时间（后端按时间衰减算薄弱点，不能用接收时间）
+          'created_at': r.createdAt.toUtc().toIso8601String(),
           'ai_model': r.aiModel,
           'latency_ms': r.latencyMs,
           'tokens_used': r.tokensUsed,
@@ -359,6 +374,15 @@ class SyncService {
       // 后端未实现下拉接口或网络失败：静默，仅保留上行能力。
     }
     return applied;
+  }
+
+  /// 解析本地 knowledge_points（drift 中存的是 JSON 数组字符串）
+  List<String> _decodeKp(String raw) {
+    try {
+      final v = jsonDecode(raw);
+      if (v is List) return v.map((e) => e.toString()).toList();
+    } catch (_) {}
+    return const [];
   }
 
   /// 手动同步入口：先上行补传本地未同步记录，再从后端下拉回写缺失记录。

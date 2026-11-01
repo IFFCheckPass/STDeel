@@ -55,3 +55,6 @@ android/key.properties
 # 本地构建工具链（持久化/软链，勿提交）
 /.toolchain
 /.toolchain/
+
+# 用户上传的临时附件（勿提交）
+/.uploads/
