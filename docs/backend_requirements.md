@@ -442,3 +442,122 @@
 3. 数据库迁移脚本 + 字段说明。
 4. 第 8 章 13 条验收用例的自测记录。
 5. 若与本文档有偏差，逐条列出并说明原因，联调前双方确认。
+
+---
+
+## 11. 同步 v2（2026-11 新增，后端必须对齐）
+
+> 背景：后端清库后，客户端手动同步提示「成功」但上传/回写均为 0 条；原因是旧逻辑只上传
+> `synced=false` 的记录，且下行按旧 `remoteId` 匹配。新方案：**每次手动同步都全量上行 →
+> 后端去重落盘并回传 id 映射 → 增量下行**。
+
+### 11.1 去重键（两个都要落库）
+
+| 字段 | 计算方 | 规则 | 用途 |
+|---|---|---|---|
+| `client_ref` | 客户端 | `device_id + ":" + local_id`（ASCII 冒号） | 同设备重复同步幂等 |
+| `content_key` | 客户端 | `sha256_hex(normalized_question_text + "|" + created_at.millisecondsSinceEpoch)`；`normalized_question_text = trim 后把连续空白压缩为单个空格` | 跨设备/重装/换机去重 |
+
+后端 upsert 顺序：
+1. 命中 `(user_id, client_ref)` → 更新，`status=updated`；
+2. 否则命中 `(user_id, content_key)` → 更新该行，`status=duplicated`（跨设备同一条记录）；
+3. 都没有 → 插入，`status=inserted`。
+
+> 每次 upsert 都必须返回真实 `id`（客户端用它覆盖本地 `remoteId`；后端清库后旧 id 全部失效）。
+
+### 11.2 `POST /solve-records/bulk`（新增）
+
+**请求**（单批 ≤100 条，客户端按 100 分批）
+
+```json
+{
+  "user_id": "u_5",
+  "device_id": "550e8400-e29b-41d4-a716-446655440000",
+  "records": [
+    {
+      "client_ref": "550e8400-e29b-41d4-a716-446655440000:18",
+      "content_key": "hex...",
+      "local_id": 18,
+      "question_text": "…",
+      "answer": "…",
+      "solution": "…",
+      "knowledge_points": ["直线与圆", "圆的方程"],
+      "subject": "数学",
+      "ai_model": "qwen-vl-max",
+      "latency_ms": 3200,
+      "tokens_used": 512,
+      "matched": false,
+      "action_type": "solve|retry|detail|correct|partial|wrong",
+      "user_feedback": "none|correct|partial|wrong",
+      "image_path": "/data/.../x.jpg",
+      "created_at": "2026-10-20T08:30:00.000Z"
+    }
+  ]
+}
+```
+
+**响应**（`items` 按请求顺序一一对应）
+
+```json
+{
+  "server_time": "2026-11-01T07:30:00.000Z",
+  "items": [
+    { "client_ref": "…:18", "id": 1001, "status": "inserted" },
+    { "client_ref": "…:19", "id": 1002, "status": "updated" },
+    { "client_ref": "…:20", "id": 1002, "status": "duplicated" }
+  ],
+  "failed": [ { "client_ref": "…:21", "reason": "bad_record" } ]
+}
+```
+
+规则：
+- 幂等：同一 `client_ref` 重复提交返回同一 `id`；
+- 单条失败不影响其它条（`failed` 逐条列出）；
+- `id` 必须为数字；`status` 必须为 `inserted|updated|duplicated`；
+- 请求超时建议 ≥60s；响应体不要带整条记录（只需要映射）。
+
+### 11.3 `GET /solve-records`（扩展，向后兼容）
+
+新增参数：
+
+| 参数 | 说明 |
+|---|---|
+| `all=1` | 返回该用户**全部**记录（忽略 30/90 天窗口），用于首次同步/后端清库恢复 |
+| `updated_since=<ISO8601>` | 只返回 `updated_at >= 该时间` 的记录（增量） |
+| `limit` | 默认 200，上限 200 |
+| `cursor` | 上一页返回的 `next_cursor` |
+| `include_deleted=1` | 响应附带 `deleted`（后端已删除的 id 列表） |
+
+响应：
+
+```json
+{
+  "items": [ { "id": 1001, "question_text": "…", "knowledge_points": [], "updated_at": "2026-11-01T07:29:00Z", "created_at": "…", "...": "…" } ],
+  "next_cursor": null,
+  "deleted": [1003],
+  "server_time": "2026-11-01T07:30:00.000Z"
+}
+```
+
+- 记录必须带 `updated_at`（任何字段/反馈变化都要刷新它）；
+- `server_time` 供客户端存为下次 `updated_since`（避免设备时钟偏差）；
+- 原有 30/90 天窗口行为保留（不传 `all`/`updated_since` 时）。
+
+### 11.4 兼容与回退
+
+- `POST /solve-records` 两种旧形态继续保留（旧版客户端 + 新客户端兜底）。
+- 新客户端遇到 `bulk` 返回 404/405 时，自动回退为「逐条形态 B」全量上传（慢但可用）。
+- `GET` 不支持 `all/updated_since` 时，回退旧版窗口拉取。
+
+### 11.5 验收用例（同步 v2）
+
+| # | 场景 | 预期 |
+|---|---|---|
+| 1 | 后端清库后手动同步 | 客户端全量上传；提示「上传 N 条」而非 0；后端记录数恢复 |
+| 2 | 上传后立刻同步 | `duplicated/updated` 命中，不产生重复行 |
+| 3 | A 设备上传后，B 设备用同名账号同步 | 按 `content_key` 命中同一行，不重复；B 拉回全部记录 |
+| 4 | 本地原件被清（重装）后同步 | `client_ref` 变化但 `content_key` 命中 → 不重复 |
+| 5 | 修改反馈后同步 | `PATCH` 生效；`GET updated_since` 能带回最新 `user_feedback/action_type` |
+| 6 | 两条同题干、不同解题时间 | `content_key` 不同 → 两个独立记录 |
+| 7 | 单批中某条字段非法 | 该条 `failed`，其余正常落库并回传 id |
+| 8 | 超过 200 条 | 分页 `next_cursor` 正确，客户端循环拉完 |

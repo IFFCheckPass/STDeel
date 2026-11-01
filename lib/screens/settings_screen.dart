@@ -1,4 +1,4 @@
-/// 设置页 - 思谛 STDeel（v0.9.14 卡片化）
+/// 设置页 - 思谛 STDeel（v0.9.15 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
@@ -467,7 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ===== 关于 / 更新 =====
           _ExpCard(
             title: '关于 / 更新',
-            summary: '版本 v0.9.14',
+            summary: '版本 v0.9.15',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -489,7 +489,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.14',
+              '思谛 STDeel · v0.9.15',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
@@ -896,9 +896,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final result = await sync.syncAll();
-      final msg = result.hasFailure
-          ? '同步完成：上传成功 ${result.uploaded} 条、失败 ${result.uploadFailed} 条，回写 ${result.pulled} 条'
-          : '同步成功：上传 ${result.uploaded} 条，回写 ${result.pulled} 条';
+      // 同步 v2：每次手动同步都会全量上行，这里把新建/更新/重复也展示出来
+      final uploadDetail =
+          '新建 ${result.inserted}、更新 ${result.updated}、重复 ${result.duplicated}';
+      final msg = '同步完成：上传 ${result.uploaded} 条（$uploadDetail）'
+          '${result.uploadFailed > 0 ? '，失败 ${result.uploadFailed} 条' : ''}'
+          '，回写 ${result.pulled} 条'
+          '${result.deleted > 0 ? '，删除 ${result.deleted} 条' : ''}';
       messenger.showSnackBar(
         SnackBar(
           content: Text(msg),

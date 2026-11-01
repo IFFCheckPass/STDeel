@@ -95,6 +95,28 @@ class SolveRecordDao extends DatabaseAccessor<AppDatabase>
       (update(solveRecords)..where((t) => t.id.equals(id)))
           .write(const SolveRecordsCompanion(synced: Value(true)));
 
+  /// 标记单条记录为未同步（上传失败时保留重试可能）
+  Future<int> markUnsynced(int id) =>
+      (update(solveRecords)..where((t) => t.id.equals(id)))
+          .write(const SolveRecordsCompanion(synced: Value(false)));
+
+  /// 按后端主键删除本地记录（服务端下发 deleted 列表时使用）
+  Future<int> deleteByRemoteId(int remoteId) =>
+      (delete(solveRecords)..where((t) => t.remoteId.equals(remoteId))).go();
+
+  /// 按「题干 + 解题时间」查找（同步 v2 防重复：后端清库后旧 remoteId 失效时，
+  /// 用内容键兜底命中同一条本地记录，避免重复插入）
+  Future<SolveRecordEntity?> findByQuestionAndTime(
+    String questionText,
+    DateTime createdAt,
+  ) =>
+      (select(solveRecords)
+            ..where((t) =>
+                t.questionText.equals(questionText) &
+                t.createdAt.equals(createdAt))
+            ..limit(1))
+          .getSingleOrNull();
+
   /// 写回后端主键 remoteId（上传成功后由同步服务调用），
   /// 使删除 / 反馈等后续操作能命中正确的服务器记录。
   Future<int> setRemoteId(int id, int remoteId) =>
