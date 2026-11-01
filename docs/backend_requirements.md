@@ -71,7 +71,7 @@
 | `confidence` | double/null | AI 置信度（仅批量上传的 question 内携带） |
 | `question_no` | int/null | 卷内题号，未知为 0 |
 | `image_path` | text | 客户端设备本地路径（不可访问），视为不透明字符串 |
-| `created_at` | datetime | **以服务端接收时间为准**更可靠；需回传 ISO-8601 |
+| `created_at` | datetime | 取客户端上传的**原始解题时间**（ISO-8601 / 秒或毫秒时间戳；缺失时才用接收时间；未来时间压回接收时刻，2000 年前视为无效），并原样回传 |
 
 ### 3.3 knowledge_mastery
 | 字段 | 类型 | 说明 |
@@ -179,6 +179,7 @@
   "tokens_used": 512,
   "source": "ai",
   "image_path": "/data/user/0/com.stdeel.steel/cache/x.jpg",
+  "created_at": "2026-11-01T08:30:00Z",
   "questions": [
     {
       "id": 18,
@@ -190,7 +191,8 @@
       "subject": "数学",
       "question_no": 0,
       "action_type": "solve",
-      "user_feedback": "none"
+      "user_feedback": "none",
+      "created_at": "2026-11-01T08:30:00Z"
     }
   ]
 }
@@ -220,6 +222,8 @@
   "question_text": "题干",
   "answer": "答案",
   "solution": "过程",
+  "knowledge_points": ["三角函数", "两角和差公式"],
+  "created_at": "2026-11-01T08:30:00Z",
   "ai_model": "qwen-vl-max",
   "latency_ms": 3200,
   "tokens_used": 512,
@@ -231,7 +235,8 @@
 }
 ```
 
-- 与形态 A 差异：扁平结构、无 `questions`、**无 knowledge_points/source/confidence/question_no**，多 `local_id`。
+- 与形态 A 差异：扁平结构、无 `questions`、无 `source/confidence/question_no`，多 `local_id`；
+  **`knowledge_points`（数组）与 `created_at`（原始解题时间，ISO-8601）必须携带**。
 - 响应必须**恰好 1 个数字 id**（如 `{"id":1001}`）。
 - 建议后端用「body 是否含 `questions` 数组」区分两种形态。
 
