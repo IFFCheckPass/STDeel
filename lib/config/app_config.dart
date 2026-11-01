@@ -32,6 +32,8 @@ class AppConfig {
   static const String keyThinkTimeoutSeconds = 'think_timeout_seconds';
   static const String keyThemeMode = 'theme_mode'; // system | light | dark
   static const String keyFaultLogs = 'fault_logs_json'; // 故障码记录诊断日志
+  // 同步 v2：上次成功同步的服务端时间（增量拉取 updated_since 用）
+  static const String keyLastSyncAt = 'last_sync_at';
 
   /// 账号绑定（用户名 / api-key 同步）功能开关
   ///

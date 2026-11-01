@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stdeel/models/ai_provider.dart';
 import 'package:stdeel/utils/latex_commands.dart';
+import 'package:stdeel/utils/sync_keys.dart';
 import 'package:stdeel/widgets/markdown_latex.dart';
 
 void main() {
@@ -158,5 +159,27 @@ void main() {
     expect(jsonDecode(repairLatexEscapesInJson('{"x": "a\\nb"}'))['x'],
         'a\nb');
     expect(jsonDecode(repairLatexEscapesInJson(r'{"x": "\u4e2d"}'))['x'], '中');
+  });
+
+  // ---- 同步 v2：跨设备稳定键 ----
+  test('同步 v2 内容键规范化与时间稳定性', () {
+    final t = DateTime.utc(2026, 11, 1, 8, 30, 0);
+    final k1 = contentKeyFor(questionText: '  已知  向量 a ', createdAt: t);
+    final k2 = contentKeyFor(questionText: '已知 向量 a', createdAt: t);
+    expect(k1, k2);
+
+    final k3 = contentKeyFor(
+      questionText: '已知 向量 a',
+      createdAt: t.add(const Duration(seconds: 1)),
+    );
+    expect(k3, isNot(k1));
+
+    // 同一时刻用本地时区表示，键必须一致（跨设备/时区稳定）
+    expect(
+      contentKeyFor(questionText: 'x', createdAt: t.toLocal()),
+      contentKeyFor(questionText: 'x', createdAt: t),
+    );
+    expect(clientRefFor(deviceId: 'dev-1', localId: 18), 'dev-1:18');
+    expect(normalizeQuestionText('a\t b\n c'), 'a b c');
   });
 }

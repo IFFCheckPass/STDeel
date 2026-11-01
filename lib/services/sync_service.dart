@@ -15,34 +15,52 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../data/database.dart';
 import '../models/solve_result.dart';
+import '../utils/sync_keys.dart';
 import 'backend_api.dart';
 
-/// 一次手动同步的结果统计，用于设置页展示"上传成功/失败 x 条、回写 x 条"。
+/// 一次手动同步的结果统计，用于设置页展示。
+///
+/// 同步 v2：每次手动同步都会**全量上行**本地记录，后端去重后返回 id 映射，
+/// 再按增量/全量下行。
 class SyncResult {
   const SyncResult({
     this.uploaded = 0,
     this.uploadFailed = 0,
     this.pulled = 0,
+    this.inserted = 0,
+    this.updated = 0,
+    this.duplicated = 0,
+    this.deleted = 0,
   });
 
   /// 本地上行成功的记录数
   final int uploaded;
+
   /// 本地上行失败的记录数
   final int uploadFailed;
+
   /// 从后端下拉并写回本地（新增或更新）的记录数
   final int pulled;
+
+  /// 上行结果拆分：后端新建 / 更新 / 跨设备命中重复
+  final int inserted;
+  final int updated;
+  final int duplicated;
+
+  /// 下行时按服务端 deleted 列表删除的本地记录数
+  final int deleted;
 
   bool get hasFailure => uploadFailed > 0;
   int get totalUploaded => uploaded + uploadFailed;
 
   @override
   String toString() =>
-      '上传成功 ${uploaded} 条${uploadFailed > 0 ? '，失败 $uploadFailed 条' : '，无失败'}'
-      '，回写 $pulled 条';
+      '上传成功 ${uploaded} 条（新建 $inserted、更新 $updated、重复 $duplicated）'
+      '${uploadFailed > 0 ? '，失败 $uploadFailed 条' : ''}'
+      '，回写 $pulled 条${deleted > 0 ? '（删除 $deleted 条）' : ''}';
 }
 
 class SyncService {
@@ -99,9 +117,8 @@ class SyncService {
       final ids = await _api.uploadSolveRecord(payload);
       if (recordIds != null) {
         // 后端按顺序返回与本次上传一一对应的 id 时才写回 remoteId 并标记
-        // 已同步；否则保持未同步（synced=false），由后续 flushUnsynced 整条
-        // 补传——若在无 remoteId 时强行 markSynced，反馈/删除将永久失效，
-        // 且下拉同步会因本地 remoteId 为空而重复插入记录。
+        // 已同步；否则保持未同步（synced=false），由后续手动同步的全量上行
+        // 补传——若在无 remoteId 时强行 markSynced，反馈/删除将永久失效。
         if (ids.length == recordIds.length) {
           for (var i = 0; i < recordIds.length; i++) {
             await _db.solveRecordDao.setRemoteId(recordIds[i], ids[i]);
@@ -120,7 +137,7 @@ class SyncService {
   ///
   /// 必须使用后端主键 [remoteId] 命中服务器记录；本地尚未拿到 remoteId
   /// （未同步或后端未返回 id）时跳过 PATCH——反馈字段已在本地更新，
-  /// 会随 [flushUnsynced] 整条重传时一并带过去。
+  /// 会随手动同步的全量上行一并带过去。
   Future<void> uploadFeedback(int recordId, String feedback) async {
     try {
       final rec = await _db.solveRecordDao.getById(recordId);
@@ -214,58 +231,131 @@ class SyncService {
     }
   }
 
-  /// 联网后批量同步尚未上传的解题记录
-  /// @return 上传成功 / 失败 条数
-  Future<({int success, int failed})> flushUnsynced() async {
-    final records = await _db.solveRecordDao.getUnsynced();
-    var success = 0;
-    var failed = 0;
-    for (final r in records) {
-      try {
-        final ids = await _api.uploadSolveRecord({
-          'local_id': r.id,
-          'question_text': r.questionText,
-          'answer': r.answer,
-          'solution': r.solution,
-          'knowledge_points': _decodeKp(r.knowledgePoints),
-          // 原始解题时间（后端按时间衰减算薄弱点，不能用接收时间）
-          'created_at': r.createdAt.toUtc().toIso8601String(),
-          'ai_model': r.aiModel,
-          'latency_ms': r.latencyMs,
-          'tokens_used': r.tokensUsed,
-          'matched': r.matched,
-          // 四色状态（正确/错误/疑问/重答）必须随记录上传：
-          // action_type 覆盖 solve/retry/detail/correct/wrong，
-          // user_feedback 兼容旧契约（none/correct/wrong）。
-          'action_type': r.actionType,
-          'user_feedback': r.userFeedback,
-          'image_path': r.imagePath,
-          'subject': r.subject,
+  /// 单批上传条数（后端建议 ≤100）
+  static const int _pushBatchSize = 100;
+
+  /// 同步 v2：**全量上行**本地记录（分批 bulk；旧后端自动退化为逐条）。
+  ///
+  /// 目的：后端清库 / 换机后，手动同步仍能把本地数据完整回传。
+  /// 后端按 `(user_id, client_ref)` → `(user_id, content_key)` upsert 并返回
+  /// 真实 id，客户端写回 `remoteId`（旧 id 全部失效也不会重复落库）。
+  Future<
+      ({
+        int uploaded,
+        int failed,
+        int inserted,
+        int updated,
+        int duplicated,
+      })> pushAllRecords() async {
+    final all = await _db.solveRecordDao.getAll();
+    if (all.isEmpty) {
+      return (uploaded: 0, failed: 0, inserted: 0, updated: 0, duplicated: 0);
+    }
+    final deviceId = await _api.getDeviceId();
+    var uploaded = 0, failed = 0, inserted = 0, updated = 0, duplicated = 0;
+
+    for (var start = 0; start < all.length; start += _pushBatchSize) {
+      final end = start + _pushBatchSize <= all.length
+          ? start + _pushBatchSize
+          : all.length;
+      final slice = all.sublist(start, end);
+      final byRef = <String, SolveRecordEntity>{};
+      final payload = <Map<String, dynamic>>[];
+      for (final r in slice) {
+        final ref = clientRefFor(deviceId: deviceId, localId: r.id);
+        byRef[ref] = r;
+        payload.add({
+          'client_ref': ref,
+          'content_key': contentKeyFor(
+            questionText: r.questionText,
+            createdAt: r.createdAt,
+          ),
+          ..._recordFields(r),
         });
-        // 逐条上传通常返回单个后端 id：写回 remoteId 供删除/反馈使用。
-        // 未拿到后端 id 时保持未同步，下次重试补传——否则 feedback/删除
-        // 会因本地 remoteId 为空而永久失效，下拉同步也会重复插入记录。
-        if (ids.length != 1) {
-          failed++;
-          continue;
-        }
-        await _db.solveRecordDao.setRemoteId(r.id, ids.first);
+      }
+
+      BulkUploadResult? bulk;
+      try {
+        bulk = await _api.bulkUploadSolveRecords(
+          deviceId: deviceId,
+          records: payload,
+        );
       } catch (_) {
-        // 网络/后端失败：保留记录待下次重试。
-        failed++;
+        bulk = null; // 网络/接口异常 → 本批走逐条兜底
+      }
+
+      if (bulk != null) {
+        final matched = <int>{};
+        for (final item in bulk.items) {
+          final r = byRef[item.clientRef];
+          if (r == null || matched.contains(r.id)) continue;
+          matched.add(r.id);
+          await _db.solveRecordDao.setRemoteId(r.id, item.id);
+          await _db.solveRecordDao.markSynced(r.id);
+          uploaded++;
+          if (item.status == 'inserted') {
+            inserted++;
+          } else if (item.status == 'duplicated') {
+            duplicated++;
+          } else {
+            updated++;
+          }
+        }
+        for (final r in slice) {
+          if (matched.contains(r.id)) continue;
+          failed++;
+          await _db.solveRecordDao.markUnsynced(r.id);
+        }
         continue;
       }
-      try {
-        await _db.solveRecordDao.markSynced(r.id);
-      } catch (e) {
-        // 上传已成功但本地标记失败：不得把该记录误判为"未上传"再次投递，
-        // 在此单独记录错误，交由上层/日志处理，不再重复上传。
-        debugPrint('flushUnsynced: 记录 ${r.id} 上传成功但 markSynced 失败: $e');
+
+      // 旧后端兜底：逐条形态 B 全量上传（慢，但保证可用）
+      for (final r in slice) {
+        try {
+          final ids = await _api.uploadSolveRecord(_recordFields(r));
+          if (ids.length != 1) {
+            failed++;
+            await _db.solveRecordDao.markUnsynced(r.id);
+            continue;
+          }
+          await _db.solveRecordDao.setRemoteId(r.id, ids.first);
+          await _db.solveRecordDao.markSynced(r.id);
+          uploaded++;
+          updated++;
+        } catch (_) {
+          failed++;
+          await _db.solveRecordDao.markUnsynced(r.id);
+        }
       }
-      success++;
     }
-    return (success: success, failed: failed);
+
+    return (
+      uploaded: uploaded,
+      failed: failed,
+      inserted: inserted,
+      updated: updated,
+      duplicated: duplicated,
+    );
   }
+
+  /// 单条记录上行字段（形态 B / bulk 共用）
+  Map<String, dynamic> _recordFields(SolveRecordEntity r) => {
+        'local_id': r.id,
+        'question_text': r.questionText,
+        'answer': r.answer,
+        'solution': r.solution,
+        'knowledge_points': _decodeKp(r.knowledgePoints),
+        // 原始解题时间（后端按时间衰减算薄弱点，不能用接收时间）
+        'created_at': r.createdAt.toUtc().toIso8601String(),
+        'ai_model': r.aiModel,
+        'latency_ms': r.latencyMs,
+        'tokens_used': r.tokensUsed,
+        'matched': r.matched,
+        'action_type': r.actionType,
+        'user_feedback': r.userFeedback,
+        'image_path': r.imagePath,
+        'subject': r.subject,
+      };
 
   /// 待删除队列（本地已删、后端待删的墓碑）重试：删除成功即移除。
   /// @return 成功删除的条数
@@ -290,11 +380,8 @@ class SyncService {
     return done;
   }
 
-  /// 下拉后端解题记录并写回本地（仅正确=近1个月 / 错误=近3个月）。
-  ///
-  /// 按后端主键 remoteId 幂等合并，避免重复插入。后端未适配或失败时静默。
-  /// 会跳过待删除队列中的 remoteId，防止被我方刚删除的记录再次回写。
-  /// @return 写回本地（新增或更新）的记录条数
+  /// 旧版窗口下拉（同步 v2 接口不可用时的兜底）：
+  /// 仅正确=近1个月 / 错误=近3个月。后端未适配或失败时静默。
   Future<int> pullSolveRecords() async {
     var applied = 0;
     try {
@@ -305,75 +392,144 @@ class SyncService {
         wrongDays: 90,
       );
       for (final row in rows) {
-        final remoteId = (row['id'] as num?)?.toInt();
-        if (remoteId == null || remoteId <= 0) continue;
-        if (tombstone.contains(remoteId)) continue; // 待删除：跳过回写
-        // 四色状态（正确/错误/疑问/重答）：兼容后端多种字段名回写本地，
-        // 优先 action_type，其次 status，最后 user_feedback。
-        // action_type 或 user_feedback 为 correct/wrong 都视为反馈，双写
-        // 本地两字段（与本地 updateFeedback 的写法保持一致），保证
-        // 知识点页按 getByFeedback('wrong') 查询错题不漏。
-        final rawAction =
-            (row['action_type'] ?? row['status'])?.toString().trim() ?? '';
-        final rawFeedback = row['user_feedback']?.toString().trim() ?? '';
-        final isFeedback = rawAction == 'correct' ||
-            rawAction == 'partial' ||
-            rawAction == 'wrong' ||
-            rawFeedback == 'correct' ||
-            rawFeedback == 'partial' ||
-            rawFeedback == 'wrong';
-        // 后端未回传明确反馈（字段缺失 / 空串 / none）时，**绝不能用默认值覆盖**
-        // 本地已标记的 correct/partial/wrong，否则每同步一次状态就被清空。
-        final local = await _db.solveRecordDao.getByRemoteId(remoteId);
-        final localFeedback = local?.userFeedback ?? 'none';
-        final localHasFeedback =
-            const ['correct', 'partial', 'wrong'].contains(localFeedback);
-        String actionType;
-        String userFeedback;
-        if (isFeedback && (local == null || local.synced)) {
-          // 后端明确回传了反馈，且本地没有待上传的新状态：以后端为准
-          userFeedback = rawFeedback.isNotEmpty ? rawFeedback : rawAction;
-          actionType = rawAction.isNotEmpty ? rawAction : userFeedback;
-        } else if (localHasFeedback) {
-          // 本地已有明确反馈：保留，不降级
-          actionType = local!.actionType;
-          userFeedback = localFeedback;
-        } else {
-          // 无反馈记录：采纳后端动作（retry/detail/solve），缺省回落本地
-          actionType =
-              rawAction.isNotEmpty ? rawAction : (local?.actionType ?? 'solve');
-          userFeedback = 'none';
-        }
-        await _db.solveRecordDao.upsertFromBackend(
-          remoteId: remoteId,
-          questionText: row['question_text']?.toString() ?? '',
-          answer: row['answer']?.toString() ?? '',
-          solution: row['solution']?.toString() ?? '',
-          // 后端未回传反馈时不默认成 correct，避免把无反馈记录误标为"正确"
-          userFeedback: userFeedback,
-          actionType: actionType,
-          knowledgePoints:
-              row['knowledge_points'] is List
-                  ? jsonEncode(row['knowledge_points'])
-                  : '[]',
-          aiModel: row['ai_model']?.toString() ?? '',
-          latencyMs: (row['latency_ms'] as num?)?.toInt() ?? 0,
-          tokensUsed: (row['tokens_used'] as num?)?.toInt() ?? 0,
-          matched: row['matched'] == true,
-          subject: row['subject']?.toString().trim().isNotEmpty == true
-              ? row['subject'].toString().trim()
-              : '未分类',
-          createdAt:
-              row['created_at'] is String
-                  ? DateTime.tryParse(row['created_at'])
-                  : null,
-        );
-        applied++;
+        if (await _applyServerRow(row, tombstone)) applied++;
       }
     } catch (_) {
       // 后端未实现下拉接口或网络失败：静默，仅保留上行能力。
     }
     return applied;
+  }
+
+  /// 同步 v2 下行：首次全量、之后增量（分页 + 服务端删除列表）。
+  Future<({int applied, int deleted})> pullIncremental() async {
+    final last = await _api.getLastSyncAt();
+    final tombstone = await _db.pendingDeleteDao.getAllRemoteIds();
+    final firstSync = last == null || last.isEmpty;
+    var applied = 0;
+    var deleted = 0;
+    String? cursor;
+    String? serverTime;
+
+    while (true) {
+      SolveRecordPage? page;
+      try {
+        page = await _api.fetchSolveRecordPage(
+          all: firstSync,
+          updatedSince: firstSync ? null : last,
+          limit: 200,
+          cursor: cursor,
+        );
+      } catch (_) {
+        page = null;
+      }
+      if (page == null) {
+        // 旧后端：退回窗口拉取（保证仍能工作）
+        applied += await pullSolveRecords();
+        return (applied: applied, deleted: deleted);
+      }
+
+      serverTime = page.serverTime ?? serverTime;
+      for (final row in page.items) {
+        if (await _applyServerRow(row, tombstone)) applied++;
+      }
+      for (final id in page.deletedIds) {
+        if (tombstone.contains(id)) continue;
+        await _db.solveRecordDao.deleteByRemoteId(id);
+        deleted++;
+      }
+
+      final next = page.nextCursor;
+      if (next == null || next.isEmpty) break;
+      cursor = next;
+    }
+
+    // 记录服务端时间，避免设备时钟偏差导致漏拉
+    final stamp =
+        serverTime ?? last ?? DateTime.now().toUtc().toIso8601String();
+    await _api.setLastSyncAt(stamp);
+    return (applied: applied, deleted: deleted);
+  }
+
+  /// 应用一条服务端记录：状态合并（不降级）+ 防重复 + upsert。
+  ///
+  /// 防重复：后端清库后本地旧 `remoteId` 全部失效，若该条在本地存在
+  /// （题干 + 解题时间一致），先写回新 id 再更新，绝不重复插入。
+  Future<bool> _applyServerRow(
+    Map<String, dynamic> row,
+    Set<int> tombstone,
+  ) async {
+    final remoteId = (row['id'] as num?)?.toInt();
+    if (remoteId == null || remoteId <= 0) return false;
+    if (tombstone.contains(remoteId)) return false; // 待删除：跳过回写
+
+    final questionText = row['question_text']?.toString() ?? '';
+    final createdAt = row['created_at'] is String
+        ? DateTime.tryParse(row['created_at'] as String)
+        : null;
+
+    var local = await _db.solveRecordDao.getByRemoteId(remoteId);
+    if (local == null && createdAt != null && questionText.isNotEmpty) {
+      final byContent = await _db.solveRecordDao.findByQuestionAndTime(
+        questionText,
+        createdAt,
+      );
+      if (byContent != null) {
+        await _db.solveRecordDao.setRemoteId(byContent.id, remoteId);
+        local = byContent;
+      }
+    }
+
+    // 四色状态（正确/错误/疑问/重答）：优先 action_type，其次 status。
+    final rawAction =
+        (row['action_type'] ?? row['status'])?.toString().trim() ?? '';
+    final rawFeedback = row['user_feedback']?.toString().trim() ?? '';
+    final isFeedback = rawAction == 'correct' ||
+        rawAction == 'partial' ||
+        rawAction == 'wrong' ||
+        rawFeedback == 'correct' ||
+        rawFeedback == 'partial' ||
+        rawFeedback == 'wrong';
+
+    // 后端未回传明确反馈（缺失/空串/none）时绝不覆盖本地已标记的状态。
+    final localFeedback = local?.userFeedback ?? 'none';
+    final localHasFeedback =
+        const ['correct', 'partial', 'wrong'].contains(localFeedback);
+
+    String actionType;
+    String userFeedback;
+    if (isFeedback && (local == null || local.synced)) {
+      userFeedback = rawFeedback.isNotEmpty ? rawFeedback : rawAction;
+      actionType = rawAction.isNotEmpty ? rawAction : userFeedback;
+    } else if (localHasFeedback) {
+      actionType = local!.actionType;
+      userFeedback = localFeedback;
+    } else {
+      actionType =
+          rawAction.isNotEmpty ? rawAction : (local?.actionType ?? 'solve');
+      userFeedback = 'none';
+    }
+
+    await _db.solveRecordDao.upsertFromBackend(
+      remoteId: remoteId,
+      questionText: questionText,
+      answer: row['answer']?.toString() ?? '',
+      solution: row['solution']?.toString() ?? '',
+      // 后端未回传反馈时不默认成 correct，避免把无反馈记录误标为"正确"
+      userFeedback: userFeedback,
+      actionType: actionType,
+      knowledgePoints: row['knowledge_points'] is List
+          ? jsonEncode(row['knowledge_points'])
+          : '[]',
+      aiModel: row['ai_model']?.toString() ?? '',
+      latencyMs: (row['latency_ms'] as num?)?.toInt() ?? 0,
+      tokensUsed: (row['tokens_used'] as num?)?.toInt() ?? 0,
+      matched: row['matched'] == true,
+      subject: row['subject']?.toString().trim().isNotEmpty == true
+          ? row['subject'].toString().trim()
+          : '未分类',
+      createdAt: createdAt,
+    );
+    return true;
   }
 
   /// 解析本地 knowledge_points（drift 中存的是 JSON 数组字符串）
@@ -385,18 +541,25 @@ class SyncService {
     return const [];
   }
 
-  /// 手动同步入口：先上行补传本地未同步记录，再从后端下拉回写缺失记录。
-  /// @return 各阶段计数，供 UI 展示"成功/失败 x 条"。
+  /// 手动同步入口（同步 v2）：
+  /// 墓碑重试 → **全量上行** → 按 id 映射回写 → 增量/全量下行。
+  ///
+  /// 后端清库后依然会全量回传本地数据，不再出现"提示成功但 0 条"。
   Future<SyncResult> syncAll() async {
-    // 先清空"本地已删、后端待删"的墓碑队列，再上行补传、下行回写，
-    // 避免被待删除记录回写覆盖。
+    // 1) 先重试"本地已删、后端待删"的墓碑，避免把已删记录又推回服务器
     await flushPendingDeletes();
-    final upload = await flushUnsynced();
-    final pulled = await pullSolveRecords();
+    // 2) 全量上行（后端按 client_ref / content_key 去重落盘并回传真实 id）
+    final push = await pushAllRecords();
+    // 3) 下行：首次全量、之后增量，并处理服务端下发的删除列表
+    final pull = await pullIncremental();
     return SyncResult(
-      uploaded: upload.success,
-      uploadFailed: upload.failed,
-      pulled: pulled,
+      uploaded: push.uploaded,
+      uploadFailed: push.failed,
+      inserted: push.inserted,
+      updated: push.updated,
+      duplicated: push.duplicated,
+      pulled: pull.applied,
+      deleted: pull.deleted,
     );
   }
 }

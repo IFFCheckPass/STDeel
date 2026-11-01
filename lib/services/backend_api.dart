@@ -369,6 +369,91 @@ class BackendApi {
     }
   }
 
+  /// POST /solve-records/bulk — 同步 v2 批量 upsert。
+  ///
+  /// 返回 [BulkUploadResult]（每条输入的 client_ref → 后端 id / 状态）；
+  /// 后端尚未实现（404/405）时返回 **null**，由调用方退回逐条上传。
+  Future<BulkUploadResult?> bulkUploadSolveRecords({
+    required String deviceId,
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final url = '${await _baseUrl()}/solve-records/bulk';
+    try {
+      final resp = await _dio.post<dynamic>(
+        url,
+        data: {
+          'user_id': await _userId(),
+          'device_id': deviceId,
+          'records': records,
+        },
+        options: Options(
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+      return BulkUploadResult.fromJson(resp.data);
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404 || code == 405) return null; // 旧后端：不支持 bulk
+      throw BackendApiException('批量上传解题记录失败: ${e.message}');
+    }
+  }
+
+  /// GET /solve-records（同步 v2 扩展：全量 / 增量 / 分页 / 删除列表）。
+  ///
+  /// 后端未实现 `all` / `updated_since`（返回 400）时返回 **null**，
+  /// 由调用方退回旧版窗口拉取。
+  Future<SolveRecordPage?> fetchSolveRecordPage({
+    bool all = false,
+    String? updatedSince,
+    int limit = 200,
+    String? cursor,
+  }) async {
+    final url = '${await _baseUrl()}/solve-records';
+    try {
+      final resp = await _dio.get<dynamic>(
+        url,
+        queryParameters: {
+          'user_id': await _userId(),
+          if (all) 'all': 1,
+          if (updatedSince != null && updatedSince.isNotEmpty)
+            'updated_since': updatedSince,
+          'limit': limit,
+          if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+          'include_deleted': 1,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 60)),
+      );
+      final data = resp.data;
+      if (data is! Map) return null;
+      final items = <Map<String, dynamic>>[];
+      final rawItems = data['items'];
+      if (rawItems is List) {
+        for (final it in rawItems) {
+          if (it is Map) items.add(Map<String, dynamic>.from(it));
+        }
+      }
+      final deleted = <int>[];
+      final rawDeleted = data['deleted'];
+      if (rawDeleted is List) {
+        for (final d in rawDeleted) {
+          if (d is num) deleted.add(d.toInt());
+        }
+      }
+      final next = data['next_cursor']?.toString();
+      return SolveRecordPage(
+        items: items,
+        deletedIds: deleted,
+        nextCursor: next == null || next.isEmpty ? null : next,
+        serverTime: data['server_time']?.toString(),
+      );
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 400 || code == 404 || code == 405) return null;
+      throw BackendApiException('获取解题记录失败: ${e.message}');
+    }
+  }
+
   /// POST /answer-library — 上传标准答案
   Future<void> uploadAnswer(Map<String, dynamic> payload) async {
     final url = '${await _baseUrl()}/answer-library';
@@ -442,6 +527,16 @@ class BackendApi {
     }
   }
 
+  /// 对外暴露稳定设备标识（同步 v2 的 `client_ref` 前缀）
+  Future<String> getDeviceId() => _deviceId();
+
+  /// 上次成功同步的服务端时间（增量拉取 `updated_since`）
+  Future<String?> getLastSyncAt() => _get(AppConfig.keyLastSyncAt);
+
+  Future<void> setLastSyncAt(String iso) async {
+    await _set(AppConfig.keyLastSyncAt, iso);
+  }
+
   /// 稳定设备标识（UUID，本地持久化）
   ///
   /// 后端注册接口按 device_id 复用用户：同一 device_id 首次注册后，
@@ -466,6 +561,76 @@ class BackendApi {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
+}
+
+/// 批量上传中单条结果
+class BulkUploadItem {
+  const BulkUploadItem({
+    required this.clientRef,
+    required this.id,
+    required this.status,
+  });
+
+  final String clientRef;
+  final int id;
+
+  /// inserted | updated | duplicated
+  final String status;
+}
+
+/// 批量上传结果
+class BulkUploadResult {
+  const BulkUploadResult({required this.items, required this.failedRefs});
+
+  final List<BulkUploadItem> items;
+
+  /// 后端逐条失败（字段非法等）的 client_ref
+  final List<String> failedRefs;
+
+  factory BulkUploadResult.fromJson(dynamic data) {
+    final items = <BulkUploadItem>[];
+    final failed = <String>[];
+    if (data is Map) {
+      final rawItems = data['items'];
+      if (rawItems is List) {
+        for (final it in rawItems) {
+          if (it is! Map) continue;
+          final ref = it['client_ref']?.toString() ?? '';
+          final id = (it['id'] as num?)?.toInt() ?? 0;
+          if (ref.isEmpty || id <= 0) continue;
+          items.add(BulkUploadItem(
+            clientRef: ref,
+            id: id,
+            status: it['status']?.toString() ?? '',
+          ));
+        }
+      }
+      final rawFailed = data['failed'];
+      if (rawFailed is List) {
+        for (final f in rawFailed) {
+          if (f is Map) failed.add(f['client_ref']?.toString() ?? '');
+        }
+      }
+    }
+    return BulkUploadResult(items: items, failedRefs: failed);
+  }
+}
+
+/// 下拉分页结果（同步 v2）
+class SolveRecordPage {
+  const SolveRecordPage({
+    required this.items,
+    required this.deletedIds,
+    this.nextCursor,
+    this.serverTime,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final List<int> deletedIds;
+  final String? nextCursor;
+
+  /// 服务端时间，作为下次增量拉取的 `updated_since`
+  final String? serverTime;
 }
 
 class BackendApiException implements Exception {
