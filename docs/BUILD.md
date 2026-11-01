@@ -841,3 +841,26 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 Actions 构建 `stdeel-setup-0.9.14.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.14
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.9.15（✅ 双端构建并发布，小版本：0.9.14 → c 位 +1，同步 v2：全量上行 + 去重 + 增量下行）
+- **版本**：`pubspec.yaml version: 0.9.15+42`；`settings_screen.dart` 角标 `v0.9.15`。
+- **用户反馈**：后端清空数据库后，手动同步提示"成功"但上传/回写均为 0 条。
+- **根因**：手动同步只上传 `synced=false` 的记录（清库后本地全部为 true → 0 条）；
+  且下行按旧 `remoteId` 匹配，后端清库后旧 id 全部失效。
+- **后端对齐**：见 `docs/backend_requirements.md` §11（`POST /solve-records/bulk` + 去重键 +
+  `GET` 的 `all/updated_since/limit/cursor/include_deleted/server_time`）。
+- **前端改动**：
+  - 新增 `lib/utils/sync_keys.dart`：`client_ref = device_id:local_id`、
+    `content_key = sha256(规范化题干|解题时间毫秒)`；
+  - `SyncService.syncAll()`：墓碑重试 → **全量分批（100/批）上行**（bulk，旧后端自动退化为逐条）→
+    按返回映射覆盖本地 `remoteId` → 增量/全量下拉（分页 + 删除列表），并保存 `last_sync_at`；
+  - 下行防重复：`remoteId` 未命中时用「题干 + 解题时间」兜底命中本地同一条，只写回新 id；
+  - `SolveRecordDao`：`markUnsynced`、`deleteByRemoteId`、`findByQuestionAndTime`；
+  - `BackendApi`：`getDeviceId`、`bulkUploadSolveRecords`、`fetchSolveRecordPage`、`last_sync_at`；
+  - 设置页同步结果：`上传 X 条（新建 a、更新 b、重复 c）、失败 d、回写 e、删除 f`。
+- **验证**：`flutter test` 16 项全通过（新增同步键单测）；`flutter analyze` 无 error/warning（132 info）。
+- **环境**：会话重启再次清空 `/root/.toolchain`，按流程重建 Flutter + Android SDK。
+- **发布（双端）**：`v0.9.15` Pre-Release 上传 `app-0.9.15.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.9.15.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.15
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。

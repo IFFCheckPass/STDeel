@@ -443,10 +443,13 @@ class SyncService {
       cursor = next;
     }
 
-    // 记录服务端时间，避免设备时钟偏差导致漏拉
-    final stamp =
-        serverTime ?? last ?? DateTime.now().toUtc().toIso8601String();
-    await _api.setLastSyncAt(stamp);
+    // 记录服务端时间，避免设备时钟偏差导致漏拉。
+    // 若后端没返回 server_time（未实现 v2），**不要**写入本地 last_sync：
+    // 否则下次会按增量拉取，可能永久漏掉更早的记录。
+    final stamp = serverTime ?? last;
+    if (stamp != null && stamp.isNotEmpty) {
+      await _api.setLastSyncAt(stamp);
+    }
     return (applied: applied, deleted: deleted);
   }
 
