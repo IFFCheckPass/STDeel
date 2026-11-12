@@ -864,3 +864,20 @@ rm -f android/upload-keystore.jks android/key.properties
   触发 Actions 构建 `stdeel-setup-0.9.15.exe` 同 tag。
   - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.9.15
 - 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
+
+### v0.10.1（✅ 双端构建并发布，小中位调整：0.9.15 → 0.10.1，设置页信息架构重组）
+- **版本**：`pubspec.yaml version: 0.10.1+43`；`settings_screen.dart` 角标 `v0.10.1`（用户指定版本号）。
+- **需求**：设置页卡片合并重组，减少入口数量。
+- **改动**：
+  - 删除「账户」「存储与缓存」「故障码记录」三张独立卡片，由 8 张合并为 5 张；
+  - 「后端与数据」= 启动核查情况 + 后端配置（公网/内网 + 连通性测试）+ 账户配置 +
+    手动同步至后端 + 本地备份；
+  - 「关于软件」（原「关于 / 更新」）= 缓存情况（图片缓存统计与清理）+ 故障码记录与日志导出 +
+    GitHub 更新；
+  - 新增 `_sectionTitle()` 分组小标题、`_buildIntegrityBanner()`、`_buildImageCache()`，
+    卡片摘要显示「公网通道 · 用户名」「版本 v0.10.1 · 缓存 xx MB」。
+- **验证**：`flutter test` 16 项全通过；`flutter analyze` 无 error/warning。
+- **发布（双端）**：`v0.10.1` Pre-Release 上传 `app-0.10.1.apk`；同步 `feature/windows-support`
+  触发 Actions 构建 `stdeel-setup-0.10.1.exe` 同 tag。
+  - 链接：https://github.com/IFFCheckPass/STDeel/releases/tag/v0.10.1
+- 收尾：删除 `android/upload-keystore.jks`、`android/key.properties`，保持 main 干净。
