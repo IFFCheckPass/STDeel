@@ -1,9 +1,10 @@
-/// 设置页 - 思谛 STDeel（v0.9.15 卡片化）
+/// 设置页 - 思谛 STDeel（v0.10.1 卡片化）
 ///
 /// 每类设置收纳为「可点击展开」的卡片，折叠时仅显示一行标题与关键摘要，
 /// 减少屏幕空间占用。点击标题展开全部配置。
 ///
-/// 各类目：AI 模型组合、解题设置、外观、账户、后端与数据、存储与缓存、关于/更新、故障码记录。
+/// 各类目：AI 模型组合、解题设置、外观、后端与数据（启动核查/后端配置/账户/
+/// 手动同步/本地备份）、关于软件（缓存/故障码与日志/GitHub 更新）。
 library;
 
 import 'dart:async';
@@ -424,24 +425,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
-          // ===== 账户 =====
-          _ExpCard(
-            title: '账户',
-            summary: s.username != null && s.username!.isNotEmpty
-                ? s.username!
-                : '未绑定',
-            icon: Icons.person_outline,
-            expanded: _expanded.contains('account'),
-            onToggle: () => _toggle('account'),
-            child: _buildAccount(context, s),
-          ),
-
-          const SizedBox(height: 12),
-
           // ===== 后端与数据 =====
+          // 收纳：启动核查、公网/内网后端配置、账户、手动同步、本地备份
           _ExpCard(
             title: '后端与数据',
-            summary: s.usePublicBackend ? '公网通道' : '内网通道',
+            summary: [
+              s.usePublicBackend ? '公网通道' : '内网通道',
+              if (s.username != null && s.username!.isNotEmpty) s.username!,
+            ].join(' · '),
             icon: Icons.public,
             expanded: _expanded.contains('backend'),
             onToggle: () => _toggle('backend'),
@@ -450,24 +441,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
-          // ===== 存储与缓存 =====
+          // ===== 关于软件 =====
+          // 收纳：缓存情况、故障码记录与日志导出、GitHub 更新
           _ExpCard(
-            title: '存储与缓存',
-            summary: _cacheStats == null
-                ? '图片缓存 …'
-                : '图片缓存 ${_cacheStats!.humanSize} · 本地备份',
-            icon: Icons.photo_library_outlined,
-            expanded: _expanded.contains('storage'),
-            onToggle: () => _toggle('storage'),
-            child: _buildStorage(context),
-          ),
-
-          const SizedBox(height: 12),
-
-          // ===== 关于 / 更新 =====
-          _ExpCard(
-            title: '关于 / 更新',
-            summary: '版本 v0.9.15',
+            title: '关于软件',
+            summary: '版本 v0.10.1'
+                '${_cacheStats == null ? '' : ' · 缓存 ${_cacheStats!.humanSize}'}',
             icon: Icons.system_update_alt,
             expanded: _expanded.contains('about'),
             onToggle: () => _toggle('about'),
@@ -475,21 +454,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
 
           const SizedBox(height: 12),
-
-          // ===== 故障码记录 =====
-          _ExpCard(
-            title: '故障码记录',
-            summary: '诊断信息',
-            icon: Icons.bug_report_outlined,
-            expanded: _expanded.contains('fault'),
-            onToggle: () => _toggle('fault'),
-            child: _buildFaultLog(context),
-          ),
-
-          const SizedBox(height: 12),
           Center(
             child: Text(
-              '思谛 STDeel · v0.9.15',
+              '思谛 STDeel · v0.10.1',
               style: TextStyle(fontSize: 11, color: G.textFaint),
             ),
           ),
@@ -530,6 +497,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // ---------- 启动核查情况 ----------
+        _sectionTitle(Icons.verified_user_outlined, '启动核查情况'),
+        const SizedBox(height: 8),
+        _buildIntegrityBanner(),
+        const SizedBox(height: 18),
+
+        // ---------- 后端配置（公网 / 内网） ----------
+        _sectionTitle(Icons.dns_outlined, '后端配置'),
+        const SizedBox(height: 8),
         SegmentedButton<bool>(
           segments: const [
             ButtonSegment(
@@ -587,106 +563,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        Divider(color: G.glassBorder.withOpacity(0.5)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 18),
+
+        // ---------- 账户配置 ----------
+        _sectionTitle(Icons.person_outline, '账户配置'),
+        const SizedBox(height: 8),
+        _buildAccount(context, s),
+        const SizedBox(height: 18),
+
+        // ---------- 手动同步 ----------
+        _sectionTitle(Icons.sync, '手动同步至后端'),
+        const SizedBox(height: 8),
+        Text(
+          '每次同步都会把本地全部解题记录上传（后端去重落盘），再拉回云端缺失或有更新的记录。',
+          style: TextStyle(fontSize: 12, color: G.textFaint, height: 1.5),
+        ),
+        const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: () => _manualSync(context),
           icon: const Icon(Icons.sync, size: 18),
-          label: const Text('手动同步解题记录（双向）'),
+          label: const Text('立即同步（双向）'),
         ),
-      ],
-    );
-  }
+        const SizedBox(height: 18),
 
-  Widget _buildStorage(BuildContext context) {
-    final integrity = DataIntegrityService.last;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 启动核查摘要（每次启动强制核查，结果实时可见）
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: (integrity == null || integrity.allOk
-                    ? G.mint
-                    : G.amber)
-                .withOpacity(0.1),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: (integrity == null || integrity.allOk
-                      ? G.mint
-                      : G.amber)
-                  .withOpacity(0.35),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                integrity == null
-                    ? Icons.hourglass_top_rounded
-                    : (integrity.allOk
-                        ? Icons.verified_rounded
-                        : Icons.warning_amber_rounded),
-                size: 16,
-                color: integrity == null || integrity.allOk
-                    ? G.mint
-                    : G.amber,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  integrity == null
-                      ? '启动数据核查进行中…'
-                      : '启动核查：${integrity.summary}'
-                          '${integrity.allOk ? '' : '\n风险：${integrity.issues.join('；')}'}',
-                  style: TextStyle(
-                      fontSize: 11.5, height: 1.5, color: G.textSecondary),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            const Icon(Icons.photo_library_outlined,
-                color: G.accent, size: 18),
-            const SizedBox(width: 10),
-            const Text('题目图片缓存',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const Spacer(),
-            Text(
-              _cacheStats == null
-                  ? '…'
-                  : '${_cacheStats!.count} 张 / ${_cacheStats!.humanSize}',
-              style: TextStyle(fontSize: 12, color: G.textSecondary),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '解题时拍摄/选用的图片会临时缓存在本地（供重答、疑问时读取完整题干），超过 15 天自动清理。',
-          style: TextStyle(fontSize: 12, color: G.textFaint, height: 1.5),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: _clearImageCache,
-          icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-          label: const Text('清除图片缓存'),
-        ),
-        const SizedBox(height: 16),
-        const Divider(height: 1),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            const Icon(Icons.backup_outlined, color: G.accent, size: 18),
-            const SizedBox(width: 10),
-            const Text('本地备份',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-          ],
-        ),
+        // ---------- 本地备份 ----------
+        _sectionTitle(Icons.backup_outlined, '本地备份'),
         const SizedBox(height: 8),
         Text(
           '将解题记录与知识点掌握度导出为 JSON 文件（离线保存、跨设备迁移），或从备份文件导入恢复。导入会合并且不产生重复记录。',
@@ -716,10 +617,112 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// 分组小标题（用于同一张卡片内区分多个板块）
+  Widget _sectionTitle(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, color: G.accent, size: 18),
+        const SizedBox(width: 10),
+        Text(text, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  /// 启动核查结果横幅（每次启动强制核查，结果实时可见）
+  Widget _buildIntegrityBanner() {
+    final integrity = DataIntegrityService.last;
+    final ok = integrity == null || integrity.allOk;
+    final color = ok ? G.mint : G.amber;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            integrity == null
+                ? Icons.hourglass_top_rounded
+                : (integrity.allOk
+                    ? Icons.verified_rounded
+                    : Icons.warning_amber_rounded),
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              integrity == null
+                  ? '启动数据核查进行中…'
+                  : '启动核查：${integrity.summary}'
+                      '${integrity.allOk ? '' : '\n风险：${integrity.issues.join('；')}'}',
+              style: TextStyle(
+                  fontSize: 11.5, height: 1.5, color: G.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 图片缓存统计与清理（归入「关于软件」）
+  Widget _buildImageCache() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.photo_library_outlined,
+                color: G.accent, size: 18),
+            const SizedBox(width: 10),
+            const Text('题目图片缓存',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Text(
+              _cacheStats == null
+                  ? '…'
+                  : '${_cacheStats!.count} 张 / ${_cacheStats!.humanSize}',
+              style: TextStyle(fontSize: 12, color: G.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '解题时拍摄/选用的图片会临时缓存在本地（供重答、疑问时读取完整题干），超过 15 天自动清理。',
+          style: TextStyle(fontSize: 12, color: G.textFaint, height: 1.5),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _clearImageCache,
+          icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+          label: const Text('清除图片缓存'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAbout(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // ---------- 缓存情况 ----------
+        _sectionTitle(Icons.photo_library_outlined, '缓存情况'),
+        const SizedBox(height: 8),
+        _buildImageCache(),
+        const SizedBox(height: 18),
+
+        // ---------- 故障码记录与日志导出 ----------
+        _sectionTitle(Icons.bug_report_outlined, '故障码记录与日志导出'),
+        const SizedBox(height: 8),
+        _buildFaultLog(context),
+        const SizedBox(height: 18),
+
+        // ---------- GitHub 更新 ----------
+        _sectionTitle(Icons.system_update_alt, 'GitHub 更新'),
+        const SizedBox(height: 8),
         Text(
           '从 GitHub 拉取最新 Release，检查到新版本后自动下载更新包并拉起系统安装器。',
           style: TextStyle(fontSize: 12, color: G.textFaint, height: 1.5),
